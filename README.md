@@ -25,7 +25,15 @@ aws ssm put-parameter \
   --overwrite \
   --region eu-central-1
 
-# 5. Register Telegram webhook
+# 5. Set Anthropic API key (get it from console.anthropic.com → API Keys)
+aws ssm put-parameter \
+  --name "/stvg-helper/anthropic-api-key" \
+  --value "YOUR_ANTHROPIC_API_KEY" \
+  --type SecureString \
+  --overwrite \
+  --region eu-central-1
+
+# 6. Register Telegram webhook
 make webhook BOT_TOKEN=YOUR_BOT_TOKEN
 ```
 

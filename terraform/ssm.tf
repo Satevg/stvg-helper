@@ -8,3 +8,14 @@ resource "aws_ssm_parameter" "bot_token" {
     ignore_changes = [value]
   }
 }
+
+resource "aws_ssm_parameter" "anthropic_api_key" {
+  name        = "/stvg-helper/anthropic-api-key"
+  description = "Anthropic API key"
+  type        = "SecureString"
+  value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

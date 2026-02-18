@@ -28,6 +28,7 @@ data "aws_iam_policy_document" "lambda_permissions" {
     actions = ["ssm:GetParameter"]
     resources = [
       aws_ssm_parameter.bot_token.arn,
+      aws_ssm_parameter.anthropic_api_key.arn,
     ]
   }
 }
