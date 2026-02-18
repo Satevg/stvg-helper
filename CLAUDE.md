@@ -4,6 +4,7 @@ Personal Telegram bot hosted on AWS Lambda.
 
 ## Tech Stack
 - **Bot**: Python 3.12, python-telegram-bot v20+
+- **Dependencies**: uv (`pyproject.toml`); runtime deps bundled in Lambda zip, dev deps (boto3) local-only
 - **Infrastructure**: Terraform, AWS (Lambda, API Gateway v2, SSM Parameter Store)
 - **State**: Terraform S3 backend with DynamoDB locking
 
@@ -16,29 +17,30 @@ Personal Telegram bot hosted on AWS Lambda.
 
 ### First-time setup
 ```bash
-# 1. Create S3 bucket + DynamoDB table for Terraform state (once only)
-bash scripts/bootstrap.sh
+# 1. Install local dev dependencies
+uv sync
 
-# 2. Build Lambda deployment package
-bash scripts/package.sh
+# 2. Create S3 bucket + DynamoDB table for Terraform state (once only)
+make bootstrap
 
-# 3. Deploy infrastructure
-cd terraform && terraform init && terraform apply
+# 3. Build Lambda zip and deploy infrastructure
+make init && make release
 
 # 4. Set the Telegram bot token
 aws ssm put-parameter --name "/stvg-helper/telegram-bot-token" \
   --value "YOUR_TOKEN" --type SecureString --overwrite
 
-# 5. Register the webhook with Telegram (use webhook_url from terraform output)
-curl "https://api.telegram.org/botYOUR_TOKEN/setWebhook?url=$(terraform -chdir=terraform output -raw webhook_url)"
+# 5. Register the webhook with Telegram
+make webhook BOT_TOKEN=YOUR_TOKEN
 ```
 
 ### Subsequent deploys
 ```bash
-bash scripts/package.sh && terraform -chdir=terraform apply
+make release
 ```
 
 ## Conventions
 - Python: snake_case, type hints where practical
 - Terraform: one resource type per file, descriptive resource names
 - All secrets via SSM Parameter Store, never hardcoded
+- Dependencies: add runtime deps to `[project.dependencies]`, dev-only deps to `[dependency-groups] dev` in `pyproject.toml`; commit `uv.lock`

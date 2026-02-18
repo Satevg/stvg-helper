@@ -5,14 +5,17 @@ Personal Telegram bot hosted on AWS Lambda.
 ## First-time setup
 
 ```bash
+# 0. Install local dev dependencies (requires uv)
+uv sync
+
 # 1. Create S3 + DynamoDB for Terraform state (once only)
-bash scripts/bootstrap.sh
+make bootstrap
 
-# 2. Build Lambda zip
-bash scripts/package.sh
+# 2. Initialise Terraform (once only)
+make init
 
-# 3. Deploy AWS infrastructure
-cd terraform && terraform init && terraform apply
+# 3. Build Lambda zip and deploy AWS infrastructure
+make release
 
 # 4. Set bot token (get it from @BotFather on Telegram)
 aws ssm put-parameter \
@@ -23,17 +26,16 @@ aws ssm put-parameter \
   --region eu-central-1
 
 # 5. Register Telegram webhook
-curl "https://api.telegram.org/botYOUR_BOT_TOKEN/setWebhook?url=$(terraform -chdir=terraform output -raw webhook_url)"
+make webhook BOT_TOKEN=YOUR_BOT_TOKEN
 ```
 
-## Deploying code changes
+## Common commands
 
-```bash
-bash scripts/package.sh && terraform -chdir=terraform apply
-```
-
-## Deploying infrastructure changes only
-
-```bash
-terraform -chdir=terraform apply
-```
+| Command | Description |
+|---|---|
+| `make release` | Build zip and deploy (most common) |
+| `make package` | Build Lambda zip only |
+| `make deploy` | Apply Terraform changes only |
+| `make bootstrap` | Create Terraform state backend (once only) |
+| `make init` | Initialise Terraform (once only) |
+| `make webhook BOT_TOKEN=<token>` | Register the Telegram webhook |

@@ -5,8 +5,11 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR=$(mktemp -d)
 ZIP_FILE="$PROJECT_ROOT/lambda.zip"
 
-echo "Installing dependencies..."
-pip install -r "$PROJECT_ROOT/bot/requirements.txt" -t "$BUILD_DIR" --quiet
+echo "Installing production dependencies..."
+REQS=$(mktemp)
+uv export --frozen --no-dev --no-emit-project -o "$REQS"
+uv pip install -r "$REQS" --target "$BUILD_DIR" --quiet
+rm "$REQS"
 
 echo "Copying bot code..."
 cp "$PROJECT_ROOT/bot/handler.py" "$BUILD_DIR/"

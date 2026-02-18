@@ -4,8 +4,8 @@ import os
 from functools import lru_cache
 
 import boto3
-from telegram import Update
-from telegram.ext import Application, CommandHandler
+from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -22,15 +22,34 @@ def get_bot_token() -> str:
     return response["Parameter"]["Value"]
 
 
+MAIN_MENU = ReplyKeyboardMarkup(
+    [[KeyboardButton("Hello"), KeyboardButton("Bye")]],
+    resize_keyboard=True,
+)
+
+
 def build_application() -> Application:
     token = get_bot_token()
     application = Application.builder().token(token).updater(None).build()
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(
+        MessageHandler(filters.Text(["Hello", "Bye"]), menu_button_handler)
+    )
     return application
 
 
 async def start_command(update: Update, context) -> None:
-    await update.message.reply_text("Hello! I'm your STVG helper bot.")
+    await update.message.reply_text(
+        "Hi! Use the menu below to get started.", reply_markup=MAIN_MENU
+    )
+
+
+async def menu_button_handler(update: Update, context) -> None:
+    text = update.message.text
+    if text == "Hello":
+        await update.message.reply_text("Hello there!")
+    elif text == "Bye":
+        await update.message.reply_text("Goodbye! See you later.")
 
 
 _application: Application | None = None

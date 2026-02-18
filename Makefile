@@ -1,0 +1,26 @@
+.PHONY: bootstrap init package deploy release webhook
+
+## One-time: create S3 + DynamoDB for Terraform state
+bootstrap:
+	@read -p "This will create AWS resources (S3 bucket + DynamoDB table). Continue? [y/N] " ans && [ "$$ans" = "y" ] || (echo "Aborted."; exit 1)
+	bash scripts/bootstrap.sh
+
+## One-time: initialise Terraform
+init:
+	terraform -chdir=terraform init
+
+## Build Lambda deployment zip
+package:
+	bash scripts/package.sh
+
+## Apply infrastructure changes only
+deploy:
+	terraform -chdir=terraform apply
+
+## Build zip and deploy (most common workflow)
+release: package deploy
+
+## Register the Telegram webhook (requires BOT_TOKEN env var)
+webhook:
+	@test -n "$(BOT_TOKEN)" || (echo "Usage: make webhook BOT_TOKEN=<token>"; exit 1)
+	curl "https://api.telegram.org/bot$(BOT_TOKEN)/setWebhook?url=$$(terraform -chdir=terraform output -raw webhook_url)"
