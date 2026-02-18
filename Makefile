@@ -1,4 +1,4 @@
-.PHONY: bootstrap init package deploy release webhook black black-fix
+.PHONY: bootstrap init package deploy release webhook black black-fix isort isort-fix mypy lint
 
 ## One-time: create S3 + DynamoDB for Terraform state
 bootstrap:
@@ -27,6 +27,21 @@ black:
 ## Reformat code with black
 black-fix:
 	uv run black bot/
+
+## Check import order with isort (fails if any file would be changed)
+isort:
+	uv run isort --check bot/
+
+## Reorder imports with isort
+isort-fix:
+	uv run isort bot/
+
+## Type-check with mypy
+mypy:
+	uv run mypy bot/
+
+## Run all checks (black, isort, mypy)
+lint: black isort mypy
 
 ## Register the Telegram webhook (requires BOT_TOKEN env var)
 webhook:

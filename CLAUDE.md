@@ -4,7 +4,7 @@ Personal Telegram bot hosted on AWS Lambda.
 
 ## Tech Stack
 - **Bot**: Python 3.12, python-telegram-bot v20+
-- **Dependencies**: uv (`pyproject.toml`); runtime deps bundled in Lambda zip, dev deps (boto3) local-only
+- **Dependencies**: uv (`pyproject.toml`); runtime deps bundled in Lambda zip, dev deps (boto3, black, isort, mypy) local-only
 - **Infrastructure**: Terraform, AWS (Lambda, API Gateway v2, SSM Parameter Store)
 - **State**: Terraform S3 backend with DynamoDB locking
 
@@ -44,3 +44,4 @@ make release
 - Terraform: one resource type per file, descriptive resource names
 - All secrets via SSM Parameter Store, never hardcoded
 - Dependencies: add runtime deps to `[project.dependencies]`, dev-only deps to `[dependency-groups] dev` in `pyproject.toml`; commit `uv.lock`
+- Linting: run `make lint` before committing; use `make black-fix` / `make isort-fix` to auto-fix formatting

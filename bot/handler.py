@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from functools import lru_cache
+from typing import Any, TypeAlias
 
 import boto3
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
@@ -13,12 +14,14 @@ logger.setLevel(logging.INFO)
 
 SSM_BOT_TOKEN_PARAM = os.environ.get("SSM_BOT_TOKEN_PARAM", "/stvg-helper/telegram-bot-token")
 
+AnyApplication: TypeAlias = Application[Any, Any, Any, Any, Any, Any]
+
 
 @lru_cache(maxsize=1)
 def get_bot_token() -> str:
     ssm = boto3.client("ssm")
     response = ssm.get_parameter(Name=SSM_BOT_TOKEN_PARAM, WithDecryption=True)
-    return response["Parameter"]["Value"]
+    return str(response["Parameter"]["Value"])
 
 
 MAIN_MENU = ReplyKeyboardMarkup(
@@ -27,7 +30,7 @@ MAIN_MENU = ReplyKeyboardMarkup(
 )
 
 
-def build_application() -> Application:
+def build_application() -> AnyApplication:
     token = get_bot_token()
     application = Application.builder().token(token).updater(None).build()
     application.add_handler(CommandHandler("start", start_command))
@@ -35,11 +38,13 @@ def build_application() -> Application:
     return application
 
 
-async def start_command(update: Update, context) -> None:
+async def start_command(update: Update, context: Any) -> None:
+    assert update.message is not None
     await update.message.reply_text("Hi! Use the menu below to get started.", reply_markup=MAIN_MENU)
 
 
-async def menu_button_handler(update: Update, context) -> None:
+async def menu_button_handler(update: Update, context: Any) -> None:
+    assert update.message is not None
     text = update.message.text
     if text == "Hello":
         await update.message.reply_text("Hello there!")
@@ -47,18 +52,18 @@ async def menu_button_handler(update: Update, context) -> None:
         await update.message.reply_text("Goodbye! See you later.")
 
 
-_application: Application | None = None
+_application: AnyApplication | None = None
 _loop: asyncio.AbstractEventLoop | None = None
 
 
-def get_application() -> Application:
+def get_application() -> AnyApplication:
     global _application
     if _application is None:
         _application = build_application()
     return _application
 
 
-async def process_update(event: dict) -> dict:
+async def process_update(event: dict[str, Any]) -> dict[str, Any]:
     application = get_application()
 
     await application.initialize()
@@ -68,7 +73,7 @@ async def process_update(event: dict) -> dict:
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
 
-def lambda_handler(event: dict, context) -> dict:
+def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     global _loop
 
     logger.info("Received event: %s", json.dumps(event))

@@ -39,3 +39,9 @@ make webhook BOT_TOKEN=YOUR_BOT_TOKEN
 | `make bootstrap` | Create Terraform state backend (once only) |
 | `make init` | Initialise Terraform (once only) |
 | `make webhook BOT_TOKEN=<token>` | Register the Telegram webhook |
+| `make lint` | Run all checks (black, isort, mypy) |
+| `make black` | Check formatting |
+| `make black-fix` | Reformat code |
+| `make isort` | Check import order |
+| `make isort-fix` | Reorder imports |
+| `make mypy` | Type-check |
