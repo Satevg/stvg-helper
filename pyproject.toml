@@ -9,4 +9,9 @@ dependencies = [
 [dependency-groups]
 dev = [
     "boto3",
+    "black",
 ]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]

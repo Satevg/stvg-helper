@@ -1,4 +1,4 @@
-.PHONY: bootstrap init package deploy release webhook
+.PHONY: bootstrap init package deploy release webhook black black-fix
 
 ## One-time: create S3 + DynamoDB for Terraform state
 bootstrap:
@@ -19,6 +19,14 @@ deploy:
 
 ## Build zip and deploy (most common workflow)
 release: package deploy
+
+## Check formatting with black (fails if any file would be changed)
+black:
+	uv run black --check bot/
+
+## Reformat code with black
+black-fix:
+	uv run black bot/
 
 ## Register the Telegram webhook (requires BOT_TOKEN env var)
 webhook:

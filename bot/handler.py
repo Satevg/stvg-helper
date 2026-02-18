@@ -11,9 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-SSM_BOT_TOKEN_PARAM = os.environ.get(
-    "SSM_BOT_TOKEN_PARAM", "/stvg-helper/telegram-bot-token"
-)
+SSM_BOT_TOKEN_PARAM = os.environ.get("SSM_BOT_TOKEN_PARAM", "/stvg-helper/telegram-bot-token")
 
 
 @lru_cache(maxsize=1)
@@ -33,16 +31,12 @@ def build_application() -> Application:
     token = get_bot_token()
     application = Application.builder().token(token).updater(None).build()
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(
-        MessageHandler(filters.Text(["Hello", "Bye"]), menu_button_handler)
-    )
+    application.add_handler(MessageHandler(filters.Text(["Hello", "Bye"]), menu_button_handler))
     return application
 
 
 async def start_command(update: Update, context) -> None:
-    await update.message.reply_text(
-        "Hi! Use the menu below to get started.", reply_markup=MAIN_MENU
-    )
+    await update.message.reply_text("Hi! Use the menu below to get started.", reply_markup=MAIN_MENU)
 
 
 async def menu_button_handler(update: Update, context) -> None:
