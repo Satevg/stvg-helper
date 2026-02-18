@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -53,6 +54,7 @@ async def menu_button_handler(update: Update, context) -> None:
 
 
 _application: Application | None = None
+_loop: asyncio.AbstractEventLoop | None = None
 
 
 def get_application() -> Application:
@@ -73,18 +75,19 @@ async def process_update(event: dict) -> dict:
 
 
 def lambda_handler(event: dict, context) -> dict:
-    import asyncio
+    global _loop
 
     logger.info("Received event: %s", json.dumps(event))
 
     if not event.get("body"):
         return {"statusCode": 400, "body": json.dumps({"error": "Empty body"})}
 
-    loop = asyncio.new_event_loop()
+    if _loop is None or _loop.is_closed():
+        _loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_loop)
+
     try:
-        return loop.run_until_complete(process_update(event))
+        return _loop.run_until_complete(process_update(event))
     except Exception:
         logger.exception("Error processing update")
         return {"statusCode": 200, "body": json.dumps({"ok": True})}
-    finally:
-        loop.close()
