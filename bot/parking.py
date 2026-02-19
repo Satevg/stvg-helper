@@ -56,7 +56,6 @@ def get_anthropic_api_key() -> str:
 
 
 def fetch_cameras() -> list[dict[str, Any]]:
-    logger.info("Logging in to Watcher at %s", WATCHER_URL)
     session = requests.Session()
     login_resp = session.post(
         f"{WATCHER_URL}/vsaas/api/v2/auth/login",
@@ -65,7 +64,6 @@ def fetch_cameras() -> list[dict[str, Any]]:
     )
     login_resp.raise_for_status()
     watcher_session = login_resp.json()["session"]
-    logger.info("Watcher login OK, session=%s...", watcher_session[:8])
 
     cameras_resp = session.get(
         f"{WATCHER_URL}/vsaas/api/v2/cameras",
@@ -74,7 +72,6 @@ def fetch_cameras() -> list[dict[str, Any]]:
     )
     cameras_resp.raise_for_status()
     result: list[dict[str, Any]] = cameras_resp.json()
-    logger.info("Got %d cameras. All titles: %s", len(result), [c.get("title", c.get("name")) for c in result])
     return result
 
 
@@ -89,7 +86,6 @@ def find_camera(cameras: list[dict[str, Any]], building: str, cam_num: int) -> d
     for cam in cameras:
         title = _norm(str(cam.get("title", "")))
         if building_norm in title and cam_suffix in title:
-            logger.info("Matched '%s — Камера %02d' → title=%r", building, cam_num, cam.get("title"))
             return cam
     logger.warning("No match for '%s — Камера %02d'", building, cam_num)
     return None
@@ -103,9 +99,7 @@ def _jpeg_from_mp4(mp4_bytes: bytes) -> bytes | None:
                 img: Image.Image = frame.to_image()  # type: ignore[no-untyped-call]
                 buf = BytesIO()
                 img.save(buf, format="JPEG")
-                jpeg = buf.getvalue()
-                logger.info("Decoded MP4 frame → %d-byte JPEG", len(jpeg))
-                return jpeg
+                return buf.getvalue()
     except Exception:
         logger.exception("Failed to decode MP4 frame with PyAV")
     return None
@@ -115,29 +109,20 @@ def _fetch_jpeg(cam: dict[str, Any]) -> bytes | None:
     name = cam["name"]
     token = cam["playback_config"]["token"]
     server = cam["streamer_hostname"]
-    logger.info("Fetching snapshot for stream '%s' from %s", name, server)
 
     try:
         url = f"https://{server}/{name}/preview.mp4"
-        logger.info("GET %s", url)
         resp = requests.get(url, params={"token": token}, timeout=10)
-        logger.info(
-            "  → status=%d, content-type=%s, size=%d",
-            resp.status_code,
-            resp.headers.get("content-type"),
-            len(resp.content),
-        )
         if resp.status_code == 200:
             return _jpeg_from_mp4(resp.content)
     except Exception:
-        logger.exception("  → MP4 request failed")
+        logger.exception("MP4 request failed for stream '%s'", name)
 
     logger.warning("No JPEG could be obtained for stream '%s'", name)
     return None
 
 
 async def _is_free(client: anthropic.AsyncAnthropic, image_bytes: bytes) -> bool:
-    logger.info("Sending %d-byte image to Claude Vision", len(image_bytes))
     response = await client.messages.create(
         model="claude-3-haiku-20240307",
         max_tokens=10,

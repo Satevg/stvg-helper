@@ -107,8 +107,6 @@ async def process_update(event: dict[str, Any]) -> dict[str, Any]:
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     global _loop
 
-    logger.info("Received event: %s", json.dumps(event))
-
     if event.get("source") == "aws.events":
         logger.info("Warmup ping — priming application singleton")
         get_application()
