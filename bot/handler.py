@@ -109,6 +109,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     logger.info("Received event: %s", json.dumps(event))
 
+    if event.get("source") == "aws.events":
+        logger.info("Warmup ping — priming application singleton")
+        get_application()
+        return {"statusCode": 200, "body": json.dumps({"ok": True})}
+
     if not event.get("body"):
         return {"statusCode": 400, "body": json.dumps({"error": "Empty body"})}
 

@@ -2,6 +2,13 @@
 
 Personal Telegram bot hosted on AWS Lambda.
 
+## Features
+
+- **Menu** — persistent reply keyboard with quick-action buttons
+- **Parking** — finds a free parking spot by analysing live camera snapshots with Claude Vision (Flussonic Watcher integration)
+- **Claude chat** — free-form messages forwarded to `claude-haiku-4-5-20251001`
+- **Warm Lambda** — EventBridge pings the function every 5 minutes to avoid cold starts
+
 ## First-time setup
 
 ```bash
