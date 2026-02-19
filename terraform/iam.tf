@@ -29,6 +29,8 @@ data "aws_iam_policy_document" "lambda_permissions" {
     resources = [
       aws_ssm_parameter.bot_token.arn,
       aws_ssm_parameter.anthropic_api_key.arn,
+      aws_ssm_parameter.watcher_username.arn,
+      aws_ssm_parameter.watcher_password.arn,
     ]
   }
 }

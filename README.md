@@ -33,7 +33,21 @@ aws ssm put-parameter \
   --overwrite \
   --region eu-central-1
 
-# 6. Register Telegram webhook
+# 6. Set Flussonic Watcher credentials (video.unet.by)
+aws ssm put-parameter \
+  --name "/stvg-helper/watcher-username" \
+  --value "YOUR_WATCHER_USERNAME" \
+  --type SecureString \
+  --overwrite \
+  --region eu-central-1
+aws ssm put-parameter \
+  --name "/stvg-helper/watcher-password" \
+  --value "YOUR_WATCHER_PASSWORD" \
+  --type SecureString \
+  --overwrite \
+  --region eu-central-1
+
+# 7. Register Telegram webhook
 make webhook BOT_TOKEN=YOUR_BOT_TOKEN
 ```
 

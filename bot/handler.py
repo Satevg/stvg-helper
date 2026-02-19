@@ -7,6 +7,7 @@ from typing import Any, TypeAlias
 
 import anthropic
 import boto3
+from parking import parking_handler
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
@@ -34,7 +35,7 @@ def get_anthropic_api_key() -> str:
 
 
 MAIN_MENU = ReplyKeyboardMarkup(
-    [[KeyboardButton("Hello"), KeyboardButton("Bye")]],
+    [[KeyboardButton("Hello"), KeyboardButton("Parking")]],
     resize_keyboard=True,
 )
 
@@ -43,7 +44,7 @@ def build_application() -> AnyApplication:
     token = get_bot_token()
     application = Application.builder().token(token).updater(None).build()
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(MessageHandler(filters.Text(["Hello", "Bye"]), menu_button_handler))
+    application.add_handler(MessageHandler(filters.Text(["Hello", "Parking"]), menu_button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, claude_handler))
     return application
 
@@ -58,8 +59,8 @@ async def menu_button_handler(update: Update, context: Any) -> None:
     text = update.message.text
     if text == "Hello":
         await update.message.reply_text("Hello there!")
-    elif text == "Bye":
-        await update.message.reply_text("Goodbye! See you later.")
+    elif text == "Parking":
+        await parking_handler(update, context)
 
 
 async def claude_handler(update: Update, context: Any) -> None:

@@ -19,3 +19,25 @@ resource "aws_ssm_parameter" "anthropic_api_key" {
     ignore_changes = [value]
   }
 }
+
+resource "aws_ssm_parameter" "watcher_username" {
+  name        = "/stvg-helper/watcher-username"
+  description = "Flussonic Watcher username"
+  type        = "SecureString"
+  value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "watcher_password" {
+  name        = "/stvg-helper/watcher-password"
+  description = "Flussonic Watcher password"
+  type        = "SecureString"
+  value       = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

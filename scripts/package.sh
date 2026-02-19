@@ -12,7 +12,7 @@ uv pip install -r "$REQS" --target "$BUILD_DIR" --quiet
 rm "$REQS"
 
 echo "Copying bot code..."
-cp "$PROJECT_ROOT/bot/handler.py" "$BUILD_DIR/"
+cp "$PROJECT_ROOT"/bot/*.py "$BUILD_DIR/"
 
 echo "Creating deployment package..."
 cd "$BUILD_DIR"
