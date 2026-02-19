@@ -4,9 +4,10 @@ resource "aws_lambda_function" "bot" {
   handler       = "handler.lambda_handler"
   runtime       = "python3.12"
   timeout       = 30
-  memory_size   = 128
+  memory_size   = 256
 
-  filename         = local.lambda_zip_path
+  s3_bucket        = aws_s3_bucket.lambda_artifacts.id
+  s3_key           = aws_s3_object.lambda_zip.key
   source_code_hash = local.lambda_zip_exists ? filebase64sha256(local.lambda_zip_path) : null
 
   environment {

@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic",
+    "av",
+    "Pillow",
     "python-telegram-bot==21.10",
     "requests",
 ]
