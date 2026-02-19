@@ -11,7 +11,7 @@ import anthropic
 import av
 import boto3
 import requests
-from PIL import Image
+from PIL import Image, ImageDraw
 from telegram import Update
 
 logger = logging.getLogger(__name__)
@@ -122,10 +122,47 @@ def _fetch_jpeg(cam: dict[str, Any]) -> bytes | None:
     return None
 
 
-async def _is_free(client: anthropic.AsyncAnthropic, image_bytes: bytes) -> bool:
+# 3×3 grid cell names and their (col, row) indices
+_GRID_CELLS: dict[str, tuple[int, int]] = {
+    "top-left": (0, 0),
+    "top-center": (1, 0),
+    "top-right": (2, 0),
+    "middle-left": (0, 1),
+    "middle-center": (1, 1),
+    "middle-right": (2, 1),
+    "bottom-left": (0, 2),
+    "bottom-center": (1, 2),
+    "bottom-right": (2, 2),
+}
+_CELL_RE = re.compile(
+    r"yes\s+(" + "|".join(_GRID_CELLS) + r")",
+    re.IGNORECASE,
+)
+
+
+def _annotate_jpeg(jpeg: bytes, cell: str) -> bytes:
+    """Highlight a 3×3 grid cell with a semi-transparent green overlay."""
+    col, row = _GRID_CELLS[cell.lower()]
+    img = Image.open(BytesIO(jpeg)).convert("RGBA")
+    w, h = img.size
+    x1, y1 = col * w // 3, row * h // 3
+    x2, y2 = (col + 1) * w // 3, (row + 1) * h // 3
+
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    draw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=3)
+    img = Image.alpha_composite(img, overlay).convert("RGB")
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+async def _is_free(client: anthropic.AsyncAnthropic, image_bytes: bytes) -> tuple[bool, str | None]:
+    """Return (is_free, grid_cell_or_None)."""
     response = await client.messages.create(
-        model="claude-3-haiku-20240307",
-        max_tokens=10,
+        model="claude-haiku-4-5-20251001",
+        max_tokens=20,
         messages=[
             {
                 "role": "user",
@@ -141,26 +178,30 @@ async def _is_free(client: anthropic.AsyncAnthropic, image_bytes: bytes) -> bool
                     {
                         "type": "text",
                         "text": (
-                            "Is there at least one free (empty, unoccupied) parking spot "
-                            "visible in this image? Answer only 'yes' or 'no'."
+                            "The image is divided into a 3×3 grid: "
+                            "top-left, top-center, top-right, "
+                            "middle-left, middle-center, middle-right, "
+                            "bottom-left, bottom-center, bottom-right.\n"
+                            "Is there at least one free (empty, unoccupied) parking spot visible?\n"
+                            "If yes, respond with exactly: yes <cell> (e.g. yes top-right)\n"
+                            "If no free spots are visible, respond with exactly: no"
                         ),
                     },
                 ],
             }
         ],
     )
-    logger.info(
-        "Vision tokens: input=%d, output=%d",
-        response.usage.input_tokens,
-        response.usage.output_tokens,
-    )
     content = response.content[0]
-    if isinstance(content, anthropic.types.TextBlock):
-        answer = content.text.strip().lower()
-        logger.info("Vision answer: %r", answer)
-        return answer.startswith("yes")
-    logger.warning("Unexpected vision response type: %r", response.content)
-    return False
+    if not isinstance(content, anthropic.types.TextBlock):
+        logger.warning("Unexpected vision response type: %r", response.content)
+        return False, None
+    answer = content.text.strip()
+    match = _CELL_RE.match(answer)
+    if match:
+        return True, match.group(1).lower()
+    if answer.lower().startswith("yes"):
+        return True, None
+    return False, None
 
 
 async def parking_handler(update: Update, context: Any) -> None:
@@ -185,25 +226,22 @@ async def parking_handler(update: Update, context: Any) -> None:
                     continue
 
                 checked += 1
-                logger.info("Analyzing %s — Камера %02d with Claude Vision", building, cam_num)
-                free = await _is_free(client, jpeg)
+                free, box = await _is_free(client, jpeg)
 
                 if free:
                     logger.info("Free spot found at %s — Камера %02d", building, cam_num)
+                    photo = _annotate_jpeg(jpeg, box) if box else jpeg
                     await status_msg.delete()
                     await update.message.reply_photo(
-                        photo=BytesIO(jpeg),
+                        photo=BytesIO(photo),
                         caption=f"Свободное место! {building} — Камера {cam_num:02d}",
                     )
                     return
-
-                logger.info("Occupied at %s — Камера %02d, continuing", building, cam_num)
 
         if checked == 0:
             logger.warning("No JPEG snapshots were available from any matched camera")
             await status_msg.edit_text("Нет доступных снимков для анализа.")
         else:
-            logger.info("Checked %d cameras, no free spots found", checked)
             await status_msg.edit_text("Свободных мест не найдено.")
 
     except Exception:

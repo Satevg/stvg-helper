@@ -16,6 +16,8 @@ dev = [
     "black",
     "isort",
     "mypy",
+    "pytest",
+    "pytest-asyncio",
     "types-requests",
 ]
 
@@ -31,3 +33,7 @@ line_length = 120
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["bot"]
+asyncio_mode = "auto"

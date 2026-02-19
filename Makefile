@@ -1,4 +1,4 @@
-.PHONY: bootstrap init package deploy release webhook black black-fix isort isort-fix mypy lint
+.PHONY: bootstrap init package deploy release webhook black black-fix isort isort-fix mypy lint test
 
 ## One-time: create S3 + DynamoDB for Terraform state
 bootstrap:
@@ -39,6 +39,10 @@ isort-fix:
 ## Type-check with mypy
 mypy:
 	uv run mypy bot/
+
+## Run unit tests
+test:
+	uv run pytest tests/
 
 ## Run all checks (black, isort, mypy)
 lint: black isort mypy
