@@ -8,10 +8,12 @@ resource "aws_lambda_function" "bot" {
 
   environment {
     variables = {
-      SSM_BOT_TOKEN_PARAM        = aws_ssm_parameter.bot_token.name
-      SSM_WATCHER_USERNAME_PARAM = aws_ssm_parameter.watcher_username.name
-      SSM_WATCHER_PASSWORD_PARAM = aws_ssm_parameter.watcher_password.name
-      WATCHER_URL                = "https://video.unet.by"
+      SSM_BOT_TOKEN_PARAM         = aws_ssm_parameter.bot_token.name
+      SSM_ANTHROPIC_API_KEY_PARAM = aws_ssm_parameter.anthropic_api_key.name
+      SSM_WATCHER_USERNAME_PARAM  = aws_ssm_parameter.watcher_username.name
+      SSM_WATCHER_PASSWORD_PARAM  = aws_ssm_parameter.watcher_password.name
+      WATCHER_URL                 = "https://video.unet.by"
+      POWERTOOLS_SERVICE_NAME     = "stvg-helper"
     }
   }
 

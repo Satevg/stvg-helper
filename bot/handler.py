@@ -1,37 +1,31 @@
 import asyncio
 import json
-import logging
 import os
-from functools import lru_cache
 from typing import Any, TypeAlias
 
 import anthropic
-import boto3
+from aws_lambda_powertools import Logger
+from aws_lambda_powertools.utilities.parameters import SSMProvider
 from parking import parking_handler
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger = Logger()
 
 SSM_BOT_TOKEN_PARAM = os.environ.get("SSM_BOT_TOKEN_PARAM", "/stvg-helper/telegram-bot-token")
 SSM_ANTHROPIC_API_KEY_PARAM = os.environ.get("SSM_ANTHROPIC_API_KEY_PARAM", "/stvg-helper/anthropic-api-key")
 
 AnyApplication: TypeAlias = Application[Any, Any, Any, Any, Any, Any]
 
+_ssm = SSMProvider()
 
-@lru_cache(maxsize=1)
+
 def get_bot_token() -> str:
-    ssm = boto3.client("ssm")
-    response = ssm.get_parameter(Name=SSM_BOT_TOKEN_PARAM, WithDecryption=True)
-    return str(response["Parameter"]["Value"])
+    return str(_ssm.get(SSM_BOT_TOKEN_PARAM, decrypt=True, max_age=3600))
 
 
-@lru_cache(maxsize=1)
 def get_anthropic_api_key() -> str:
-    ssm = boto3.client("ssm")
-    response = ssm.get_parameter(Name=SSM_ANTHROPIC_API_KEY_PARAM, WithDecryption=True)
-    return str(response["Parameter"]["Value"])
+    return str(_ssm.get(SSM_ANTHROPIC_API_KEY_PARAM, decrypt=True, max_age=3600))
 
 
 MAIN_MENU = ReplyKeyboardMarkup(
@@ -50,12 +44,14 @@ def build_application() -> AnyApplication:
 
 
 async def start_command(update: Update, context: Any) -> None:
-    assert update.message is not None
+    if update.message is None:
+        return
     await update.message.reply_text("Hi! Use the menu below to get started.", reply_markup=MAIN_MENU)
 
 
 async def menu_button_handler(update: Update, context: Any) -> None:
-    assert update.message is not None
+    if update.message is None:
+        return
     text = update.message.text
     if text == "Hello":
         await update.message.reply_text("Hello there!")
@@ -64,8 +60,8 @@ async def menu_button_handler(update: Update, context: Any) -> None:
 
 
 async def claude_handler(update: Update, context: Any) -> None:
-    assert update.message is not None
-    assert update.message.text is not None
+    if update.message is None or update.message.text is None:
+        return
 
     client = anthropic.AsyncAnthropic(api_key=get_anthropic_api_key())
     try:
@@ -104,6 +100,7 @@ async def process_update(event: dict[str, Any]) -> dict[str, Any]:
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
 
+@logger.inject_lambda_context  # type: ignore[untyped-decorator]
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     global _loop
 

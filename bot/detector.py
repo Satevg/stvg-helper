@@ -1,4 +1,3 @@
-import logging
 import os
 from functools import lru_cache
 from io import BytesIO
@@ -6,9 +5,10 @@ from typing import Any, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
+from aws_lambda_powertools import Logger
 from PIL import Image
 
-logger = logging.getLogger(__name__)
+logger = Logger(child=True)
 
 # COCO class IDs for vehicles: car, motorcycle, bus, truck
 VEHICLE_CLASSES: frozenset[int] = frozenset({2, 3, 5, 7})

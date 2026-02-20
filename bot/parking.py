@@ -1,19 +1,18 @@
 import asyncio
-import logging
 import os
 import re
-from functools import lru_cache
 from io import BytesIO
 from typing import Any
 
 import av
-import boto3
 import requests
+from aws_lambda_powertools import Logger
+from aws_lambda_powertools.utilities.parameters import SSMProvider
 from detector import Detection, detect_vehicles
 from PIL import Image, ImageDraw
 from telegram import Update
 
-logger = logging.getLogger(__name__)
+logger = Logger(child=True)
 
 SSM_WATCHER_USERNAME_PARAM = os.environ.get("SSM_WATCHER_USERNAME_PARAM", "/stvg-helper/watcher-username")
 SSM_WATCHER_PASSWORD_PARAM = os.environ.get("SSM_WATCHER_PASSWORD_PARAM", "/stvg-helper/watcher-password")
@@ -44,18 +43,15 @@ PARKING_CAMERAS: list[tuple[str, list[int]]] = [
 ]
 
 
-@lru_cache(maxsize=1)
+_ssm = SSMProvider()
+
+
 def get_watcher_username() -> str:
-    ssm = boto3.client("ssm")
-    response = ssm.get_parameter(Name=SSM_WATCHER_USERNAME_PARAM, WithDecryption=True)
-    return str(response["Parameter"]["Value"])
+    return str(_ssm.get(SSM_WATCHER_USERNAME_PARAM, decrypt=True, max_age=3600))
 
 
-@lru_cache(maxsize=1)
 def get_watcher_password() -> str:
-    ssm = boto3.client("ssm")
-    response = ssm.get_parameter(Name=SSM_WATCHER_PASSWORD_PARAM, WithDecryption=True)
-    return str(response["Parameter"]["Value"])
+    return str(_ssm.get(SSM_WATCHER_PASSWORD_PARAM, decrypt=True, max_age=3600))
 
 
 def fetch_cameras() -> list[dict[str, Any]]:
@@ -194,9 +190,10 @@ def _annotate_jpeg(jpeg: bytes, detections: list[Detection], zones: list[Zone] |
 
 
 async def parking_handler(update: Update, context: Any) -> None:
-    assert update.message is not None
+    if update.message is None:
+        return
     status_msg = await update.message.reply_text("Ищу свободное место...")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     try:
         cameras = await loop.run_in_executor(None, fetch_cameras)
