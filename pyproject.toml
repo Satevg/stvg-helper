@@ -5,6 +5,8 @@ requires-python = ">=3.12"
 dependencies = [
     "anthropic",
     "av",
+    "numpy",
+    "onnxruntime",
     "Pillow",
     "python-telegram-bot==21.10",
     "requests",

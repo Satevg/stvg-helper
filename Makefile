@@ -9,15 +9,18 @@ bootstrap:
 init:
 	terraform -chdir=terraform init
 
-## Build Lambda deployment zip
+## Build Docker image and push to ECR
 package:
-	bash scripts/package.sh
+	bash scripts/deploy.sh
 
-## Apply infrastructure changes only
+## Apply infrastructure changes and update Lambda to the latest image
 deploy:
 	terraform -chdir=terraform apply
+	aws lambda update-function-code \
+		--function-name $$(terraform -chdir=terraform output -raw lambda_function_name) \
+		--image-uri $$(terraform -chdir=terraform output -raw ecr_image_uri)
 
-## Build zip and deploy (most common workflow)
+## Build image, push to ECR, and deploy (most common workflow)
 release: package deploy
 
 ## Check formatting with black (fails if any file would be changed)

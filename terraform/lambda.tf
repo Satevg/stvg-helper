@@ -1,14 +1,10 @@
 resource "aws_lambda_function" "bot" {
   function_name = local.function_name
   role          = aws_iam_role.lambda.arn
-  handler       = "handler.lambda_handler"
-  runtime       = "python3.12"
-  timeout       = 30
-  memory_size   = 256
-
-  s3_bucket        = aws_s3_bucket.lambda_artifacts.id
-  s3_key           = aws_s3_object.lambda_zip.key
-  source_code_hash = local.lambda_zip_exists ? filebase64sha256(local.lambda_zip_path) : null
+  package_type  = "Image"
+  image_uri     = "${aws_ecr_repository.bot.repository_url}:latest"
+  timeout       = 60
+  memory_size   = 512
 
   environment {
     variables = {

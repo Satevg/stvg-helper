@@ -1,12 +1,10 @@
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock, patch
 
-from anthropic.types import TextBlock
 from PIL import Image
 
+from detector import Detection
 from parking import (
-    _CELL_RE,
-    _GRID_CELLS,
     _annotate_jpeg,
     _is_free,
     _norm,
@@ -18,6 +16,10 @@ def _make_jpeg(width: int = 300, height: int = 300, color: tuple[int, int, int] 
     buf = BytesIO()
     Image.new("RGB", (width, height), color=color).save(buf, format="JPEG", quality=95)
     return buf.getvalue()
+
+
+def _det(x1: float, y1: float, x2: float, y2: float) -> Detection:
+    return Detection(x1=x1, y1=y1, x2=x2, y2=y2, confidence=0.9, class_id=2)
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +41,6 @@ class TestNorm:
         assert _norm("  foo  ") == "foo"
 
     def test_dot_becomes_space(self):
-        # A bare dot should collapse to a single space
         assert _norm("a.b") == "a b"
 
 
@@ -84,36 +85,45 @@ class TestFindCamera:
         assert result["name"] == "stream2"
 
     def test_missing_title_field_skipped(self):
-        cameras = [{"name": "stream1"}]  # no "title" key
+        cameras = [{"name": "stream1"}]
         assert find_camera(cameras, "Авиационная 8", 1) is None
 
 
 # ---------------------------------------------------------------------------
-# _CELL_RE
+# _is_free
 # ---------------------------------------------------------------------------
 
 
-class TestCellRe:
-    def test_all_nine_cells_match(self):
-        for cell in _GRID_CELLS:
-            m = _CELL_RE.match(f"yes {cell}")
-            assert m is not None, f"no match for cell '{cell}'"
-            assert m.group(1).lower() == cell
+class TestIsFree:
+    def test_low_coverage_is_free(self):
+        with patch("parking.detect_vehicles", return_value=(0.10, [])):
+            free, detections = _is_free(b"img")
+        assert free is True
+        assert detections == []
 
-    def test_case_insensitive(self):
-        assert _CELL_RE.match("yes Middle-Center") is not None
-        assert _CELL_RE.match("YES TOP-LEFT") is not None
+    def test_high_coverage_is_not_free(self):
+        dets = [_det(0, 0, 100, 100)]
+        with patch("parking.detect_vehicles", return_value=(0.80, dets)):
+            free, detections = _is_free(b"img")
+        assert free is False
+        assert detections == dets
 
-    def test_no_response_does_not_match(self):
-        assert _CELL_RE.match("no") is None
+    def test_exactly_at_threshold_is_not_free(self):
+        with patch("parking.detect_vehicles", return_value=(0.40, [])):
+            free, _ = _is_free(b"img")
+        assert free is False
 
-    def test_yes_without_cell_does_not_match(self):
-        assert _CELL_RE.match("yes") is None
+    def test_just_below_threshold_is_free(self):
+        with patch("parking.detect_vehicles", return_value=(0.399, [])):
+            free, _ = _is_free(b"img")
+        assert free is True
 
-    def test_captures_cell_name(self):
-        m = _CELL_RE.match("yes bottom-right")
-        assert m is not None
-        assert m.group(1).lower() == "bottom-right"
+    def test_returns_detections(self):
+        dets = [_det(10, 20, 50, 60), _det(100, 100, 200, 200)]
+        with patch("parking.detect_vehicles", return_value=(0.05, dets)):
+            free, detections = _is_free(b"img")
+        assert free is True
+        assert detections == dets
 
 
 # ---------------------------------------------------------------------------
@@ -123,83 +133,31 @@ class TestCellRe:
 
 class TestAnnotateJpeg:
     def test_returns_valid_jpeg(self):
-        result = _annotate_jpeg(_make_jpeg(), "top-left")
-        img = Image.open(BytesIO(result))
-        assert img.format == "JPEG"
+        result = _annotate_jpeg(_make_jpeg(), [])
+        assert Image.open(BytesIO(result)).format == "JPEG"
 
     def test_dimensions_unchanged(self):
-        result = _annotate_jpeg(_make_jpeg(400, 200), "middle-center")
-        assert Image.open(BytesIO(result)).size == (400, 200)
+        result = _annotate_jpeg(_make_jpeg(600, 400), [_det(10, 10, 50, 50)])
+        assert Image.open(BytesIO(result)).size == (600, 400)
 
-    def test_all_cells_produce_output(self):
-        jpeg = _make_jpeg()
-        for cell in _GRID_CELLS:
-            assert len(_annotate_jpeg(jpeg, cell)) > 0
-
-    def test_output_differs_from_input(self):
-        jpeg = _make_jpeg()
-        assert _annotate_jpeg(jpeg, "top-left") != jpeg
-
-    def test_outline_region_has_green_tint(self):
-        # Use a red image so the green overlay stands out clearly.
-        jpeg = _make_jpeg(300, 300, color=(200, 0, 0))
-        result = _annotate_jpeg(jpeg, "top-left")
+    def test_no_detections_all_cells_green(self):
+        # With no vehicles every cell should be highlighted green
+        jpeg = _make_jpeg(300, 300, color=(100, 0, 0))
+        result = _annotate_jpeg(jpeg, [])
         img = Image.open(BytesIO(result)).convert("RGB")
-        # Pixel (1, 1) falls on the top-left outline (fully opaque green).
+        # Centre of top-left cell should have a green tint from the overlay
         r, g, b = img.getpixel((1, 1))
-        assert g > r, f"expected G > R at outline pixel, got R={r} G={g} B={b}"
-        assert g > b, f"expected G > B at outline pixel, got R={r} G={g} B={b}"
+        assert g > r, f"expected G > R in free cell, got R={r} G={g} B={b}"
 
+    def test_occupied_cell_not_highlighted(self):
+        # A detection covering the entire image — no cell should be green
+        jpeg = _make_jpeg(300, 300, color=(100, 0, 0))
+        result = _annotate_jpeg(jpeg, [_det(0, 0, 300, 300)])
+        img = Image.open(BytesIO(result)).convert("RGB")
+        r, g, b = img.getpixel((1, 1))
+        assert r >= g, f"expected occupied cell not green, got R={r} G={g} B={b}"
 
-# ---------------------------------------------------------------------------
-# _is_free
-# ---------------------------------------------------------------------------
-
-
-def _mock_client(text: str) -> MagicMock:
-    response = MagicMock()
-    response.content = [TextBlock(type="text", text=text)]
-    client = MagicMock()
-    client.messages.create = AsyncMock(return_value=response)
-    return client
-
-
-def _mock_client_bad_content() -> MagicMock:
-    response = MagicMock()
-    response.content = [MagicMock()]  # not a TextBlock
-    client = MagicMock()
-    client.messages.create = AsyncMock(return_value=response)
-    return client
-
-
-class TestIsFree:
-    async def test_yes_with_cell(self):
-        free, cell = await _is_free(_mock_client("yes top-right"), b"img")
-        assert free is True
-        assert cell == "top-right"
-
-    async def test_yes_cell_case_insensitive(self):
-        free, cell = await _is_free(_mock_client("yes Middle-Center"), b"img")
-        assert free is True
-        assert cell == "middle-center"
-
-    async def test_yes_without_cell(self):
-        free, cell = await _is_free(_mock_client("yes"), b"img")
-        assert free is True
-        assert cell is None
-
-    async def test_no(self):
-        free, cell = await _is_free(_mock_client("no"), b"img")
-        assert free is False
-        assert cell is None
-
-    async def test_unexpected_content_type_returns_false(self):
-        free, cell = await _is_free(_mock_client_bad_content(), b"img")
-        assert free is False
-        assert cell is None
-
-    async def test_all_cells_parsed(self):
-        for cell in _GRID_CELLS:
-            free, parsed = await _is_free(_mock_client(f"yes {cell}"), b"img")
-            assert free is True
-            assert parsed == cell
+    def test_multiple_detections(self):
+        dets = [_det(0, 0, 50, 50), _det(100, 100, 200, 200)]
+        result = _annotate_jpeg(_make_jpeg(), dets)
+        assert Image.open(BytesIO(result)).format == "JPEG"

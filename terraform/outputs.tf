@@ -12,3 +12,13 @@ output "lambda_function_name" {
   description = "Lambda function name"
   value       = aws_lambda_function.bot.function_name
 }
+
+output "ecr_image_uri" {
+  description = "ECR image URI (latest tag) for the bot container"
+  value       = "${aws_ecr_repository.bot.repository_url}:latest"
+}
+
+output "ecr_repository_url" {
+  description = "ECR repository URL"
+  value       = aws_ecr_repository.bot.repository_url
+}

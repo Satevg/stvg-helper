@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import logging
 import os
 import re
@@ -7,10 +6,10 @@ from functools import lru_cache
 from io import BytesIO
 from typing import Any
 
-import anthropic
 import av
 import boto3
 import requests
+from detector import Detection, detect_vehicles
 from PIL import Image, ImageDraw
 from telegram import Update
 
@@ -18,9 +17,11 @@ logger = logging.getLogger(__name__)
 
 SSM_WATCHER_USERNAME_PARAM = os.environ.get("SSM_WATCHER_USERNAME_PARAM", "/stvg-helper/watcher-username")
 SSM_WATCHER_PASSWORD_PARAM = os.environ.get("SSM_WATCHER_PASSWORD_PARAM", "/stvg-helper/watcher-password")
-SSM_ANTHROPIC_API_KEY_PARAM = os.environ.get("SSM_ANTHROPIC_API_KEY_PARAM", "/stvg-helper/anthropic-api-key")
 
-WATCHER_URL = os.environ.get("WATCHER_URL", "")
+WATCHER_URL = os.environ.get("WATCHER_URL", "https://video.unet.by")
+
+# Coverage ratio threshold: below this fraction of frame area occupied by vehicles → free spot likely
+COVERAGE_THRESHOLD = 0.40
 
 # (building title prefix, camera numbers) in search priority order — stop at first free spot
 PARKING_CAMERAS: list[tuple[str, list[int]]] = [
@@ -45,13 +46,6 @@ def get_watcher_username() -> str:
 def get_watcher_password() -> str:
     ssm = boto3.client("ssm")
     response = ssm.get_parameter(Name=SSM_WATCHER_PASSWORD_PARAM, WithDecryption=True)
-    return str(response["Parameter"]["Value"])
-
-
-@lru_cache(maxsize=1)
-def get_anthropic_api_key() -> str:
-    ssm = boto3.client("ssm")
-    response = ssm.get_parameter(Name=SSM_ANTHROPIC_API_KEY_PARAM, WithDecryption=True)
     return str(response["Parameter"]["Value"])
 
 
@@ -122,86 +116,40 @@ def _fetch_jpeg(cam: dict[str, Any]) -> bytes | None:
     return None
 
 
-# 3×3 grid cell names and their (col, row) indices
-_GRID_CELLS: dict[str, tuple[int, int]] = {
-    "top-left": (0, 0),
-    "top-center": (1, 0),
-    "top-right": (2, 0),
-    "middle-left": (0, 1),
-    "middle-center": (1, 1),
-    "middle-right": (2, 1),
-    "bottom-left": (0, 2),
-    "bottom-center": (1, 2),
-    "bottom-right": (2, 2),
-}
-_CELL_RE = re.compile(
-    r"yes\s+(" + "|".join(_GRID_CELLS) + r")",
-    re.IGNORECASE,
-)
+def _is_free(jpeg_bytes: bytes) -> tuple[bool, list[Detection]]:
+    """Return (is_free, detections). Free when vehicle coverage is below threshold."""
+    coverage, detections = detect_vehicles(jpeg_bytes)
+    logger.info(
+        "Vehicle coverage: %.2f (threshold: %.2f, detections: %d)", coverage, COVERAGE_THRESHOLD, len(detections)
+    )
+    return coverage < COVERAGE_THRESHOLD, detections
 
 
-def _annotate_jpeg(jpeg: bytes, cell: str) -> bytes:
-    """Highlight a 3×3 grid cell with a semi-transparent green overlay."""
-    col, row = _GRID_CELLS[cell.lower()]
-    img = Image.open(BytesIO(jpeg)).convert("RGBA")
+_GRID_COLS = 6
+_GRID_ROWS = 4
+
+
+def _annotate_jpeg(jpeg: bytes, detections: list[Detection]) -> bytes:
+    """Highlight grid cells with no vehicle overlap in green (potential free spots)."""
+    img = Image.open(BytesIO(jpeg)).convert("RGB")
     w, h = img.size
-    x1, y1 = col * w // 3, row * h // 3
-    x2, y2 = (col + 1) * w // 3, (row + 1) * h // 3
+    cell_w, cell_h = w // _GRID_COLS, h // _GRID_ROWS
 
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    draw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=3)
-    img = Image.alpha_composite(img, overlay).convert("RGB")
 
+    for row in range(_GRID_ROWS):
+        for col in range(_GRID_COLS):
+            cx1, cy1 = col * cell_w, row * cell_h
+            cx2, cy2 = cx1 + cell_w, cy1 + cell_h
+            occupied = any(d.x1 < cx2 and d.x2 > cx1 and d.y1 < cy2 and d.y2 > cy1 for d in detections)
+            if not occupied:
+                draw.rectangle([cx1, cy1, cx2 - 1, cy2 - 1], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=3)
+
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     buf = BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
-
-
-async def _is_free(client: anthropic.AsyncAnthropic, image_bytes: bytes) -> tuple[bool, str | None]:
-    """Return (is_free, grid_cell_or_None)."""
-    response = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=20,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": base64.standard_b64encode(image_bytes).decode(),
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "The image is divided into a 3×3 grid: "
-                            "top-left, top-center, top-right, "
-                            "middle-left, middle-center, middle-right, "
-                            "bottom-left, bottom-center, bottom-right.\n"
-                            "Is there at least one free (empty, unoccupied) parking spot visible?\n"
-                            "If yes, respond with exactly: yes <cell> (e.g. yes top-right)\n"
-                            "If no free spots are visible, respond with exactly: no"
-                        ),
-                    },
-                ],
-            }
-        ],
-    )
-    content = response.content[0]
-    if not isinstance(content, anthropic.types.TextBlock):
-        logger.warning("Unexpected vision response type: %r", response.content)
-        return False, None
-    answer = content.text.strip()
-    match = _CELL_RE.match(answer)
-    if match:
-        return True, match.group(1).lower()
-    if answer.lower().startswith("yes"):
-        return True, None
-    return False, None
 
 
 async def parking_handler(update: Update, context: Any) -> None:
@@ -212,7 +160,6 @@ async def parking_handler(update: Update, context: Any) -> None:
     try:
         cameras = await loop.run_in_executor(None, fetch_cameras)
 
-        client = anthropic.AsyncAnthropic(api_key=get_anthropic_api_key())
         checked = 0
 
         for building, cam_nums in PARKING_CAMERAS:
@@ -226,11 +173,11 @@ async def parking_handler(update: Update, context: Any) -> None:
                     continue
 
                 checked += 1
-                free, box = await _is_free(client, jpeg)
+                free, detections = await loop.run_in_executor(None, _is_free, jpeg)
 
                 if free:
                     logger.info("Free spot found at %s — Камера %02d", building, cam_num)
-                    photo = _annotate_jpeg(jpeg, box) if box else jpeg
+                    photo = _annotate_jpeg(jpeg, detections) if detections else jpeg
                     await status_msg.delete()
                     await update.message.reply_photo(
                         photo=BytesIO(photo),

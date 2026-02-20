@@ -29,7 +29,5 @@ provider "aws" {
 }
 
 locals {
-  function_name    = "stvg-helper-bot"
-  lambda_zip_path  = "${path.module}/../lambda.zip"
-  lambda_zip_exists = fileexists("${path.module}/../lambda.zip")
+  function_name = "stvg-helper-bot"
 }
