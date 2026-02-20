@@ -23,6 +23,15 @@ WATCHER_URL = os.environ.get("WATCHER_URL", "https://video.unet.by")
 # Coverage ratio threshold: below this fraction of frame area occupied by vehicles → free spot likely
 COVERAGE_THRESHOLD = 0.40
 
+# Normalised (x1, y1, x2, y2) rectangle defining the drivable ground area of a camera frame.
+Zone = tuple[float, float, float, float]
+
+# Per-camera zone rectangles (normalised 0.0–1.0). Cameras not listed use the full frame.
+# ("Building Name", camera_number): [(x1, y1, x2, y2), ...]
+PARKING_ZONES: dict[tuple[str, int], list[Zone]] = {
+    # Fill in after running scripts/zone_editor.py for each camera.
+}
+
 # (building title prefix, camera numbers) in search priority order — stop at first free spot
 PARKING_CAMERAS: list[tuple[str, list[int]]] = [
     ("Авиационная 8", [1, 2, 3, 4, 7, 12]),
@@ -116,12 +125,30 @@ def _fetch_jpeg(cam: dict[str, Any]) -> bytes | None:
     return None
 
 
-def _is_free(jpeg_bytes: bytes) -> tuple[bool, list[Detection]]:
+def _zone_coverage(detections: list[Detection], zones: list[Zone], img_w: int, img_h: int) -> float:
+    """Coverage ratio of vehicle detections within the given zone rectangles."""
+    zone_area = sum((x2 - x1) * img_w * (y2 - y1) * img_h for x1, y1, x2, y2 in zones)
+    if zone_area <= 0:
+        return 0.0
+    covered = 0.0
+    for d in detections:
+        for x1n, y1n, x2n, y2n in zones:
+            zx1, zy1 = x1n * img_w, y1n * img_h
+            zx2, zy2 = x2n * img_w, y2n * img_h
+            ix1, iy1 = max(d.x1, zx1), max(d.y1, zy1)
+            ix2, iy2 = min(d.x2, zx2), min(d.y2, zy2)
+            if ix2 > ix1 and iy2 > iy1:
+                covered += (ix2 - ix1) * (iy2 - iy1)
+    return min(covered / zone_area, 1.0)
+
+
+def _is_free(jpeg_bytes: bytes, zones: list[Zone] | None = None) -> tuple[bool, list[Detection]]:
     """Return (is_free, detections). Free when vehicle coverage is below threshold."""
     coverage, detections = detect_vehicles(jpeg_bytes)
-    logger.info(
-        "Vehicle coverage: %.2f (threshold: %.2f, detections: %d)", coverage, COVERAGE_THRESHOLD, len(detections)
-    )
+    if zones:
+        img = Image.open(BytesIO(jpeg_bytes))
+        coverage = _zone_coverage(detections, zones, *img.size)
+    logger.info("Coverage: %.2f (zones=%d, detections=%d)", coverage, len(zones or []), len(detections))
     return coverage < COVERAGE_THRESHOLD, detections
 
 
@@ -129,8 +156,12 @@ _GRID_COLS = 6
 _GRID_ROWS = 4
 
 
-def _annotate_jpeg(jpeg: bytes, detections: list[Detection]) -> bytes:
-    """Highlight grid cells with no vehicle overlap in green (potential free spots)."""
+def _annotate_jpeg(jpeg: bytes, detections: list[Detection], zones: list[Zone] | None = None) -> bytes:
+    """Highlight grid cells with no vehicle overlap in green (potential free spots).
+
+    When zones are provided, also draws a yellow outline around each zone and skips
+    grid cells that fall entirely outside every zone.
+    """
     img = Image.open(BytesIO(jpeg)).convert("RGB")
     w, h = img.size
     cell_w, cell_h = w // _GRID_COLS, h // _GRID_ROWS
@@ -138,10 +169,20 @@ def _annotate_jpeg(jpeg: bytes, detections: list[Detection]) -> bytes:
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
+    if zones:
+        for x1n, y1n, x2n, y2n in zones:
+            draw.rectangle([x1n * w, y1n * h, x2n * w - 1, y2n * h - 1], outline=(255, 220, 0, 255), width=2)
+
     for row in range(_GRID_ROWS):
         for col in range(_GRID_COLS):
             cx1, cy1 = col * cell_w, row * cell_h
             cx2, cy2 = cx1 + cell_w, cy1 + cell_h
+
+            if zones and not any(
+                x1n * w < cx2 and x2n * w > cx1 and y1n * h < cy2 and y2n * h > cy1 for x1n, y1n, x2n, y2n in zones
+            ):
+                continue
+
             occupied = any(d.x1 < cx2 and d.x2 > cx1 and d.y1 < cy2 and d.y2 > cy1 for d in detections)
             if not occupied:
                 draw.rectangle([cx1, cy1, cx2 - 1, cy2 - 1], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=3)
@@ -173,11 +214,12 @@ async def parking_handler(update: Update, context: Any) -> None:
                     continue
 
                 checked += 1
-                free, detections = await loop.run_in_executor(None, _is_free, jpeg)
+                zones = PARKING_ZONES.get((building, cam_num))
+                free, detections = await loop.run_in_executor(None, _is_free, jpeg, zones)
 
                 if free:
                     logger.info("Free spot found at %s — Камера %02d", building, cam_num)
-                    photo = _annotate_jpeg(jpeg, detections) if detections else jpeg
+                    photo = _annotate_jpeg(jpeg, detections, zones)
                     await status_msg.delete()
                     await update.message.reply_photo(
                         photo=BytesIO(photo),

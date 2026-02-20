@@ -5,9 +5,11 @@ from PIL import Image
 
 from detector import Detection
 from parking import (
+    Zone,
     _annotate_jpeg,
     _is_free,
     _norm,
+    _zone_coverage,
     find_camera,
 )
 
@@ -125,6 +127,74 @@ class TestIsFree:
         assert free is True
         assert detections == dets
 
+    def test_zones_recompute_coverage(self):
+        # Detection covers right half of a 300x300 image.
+        # Zone is left half (0.0–0.5 x), so zone coverage should be 0.
+        jpeg = _make_jpeg(300, 300)
+        dets = [_det(150, 0, 300, 300)]
+        zones: list[Zone] = [(0.0, 0.0, 0.5, 1.0)]
+        with patch("parking.detect_vehicles", return_value=(0.50, dets)):
+            free, _ = _is_free(jpeg, zones)
+        assert free is True  # no overlap with zone → free
+
+    def test_zones_occupied_when_detection_inside(self):
+        # Detection covers full image; zone is full frame → high zone coverage.
+        jpeg = _make_jpeg(300, 300)
+        dets = [_det(0, 0, 300, 300)]
+        zones: list[Zone] = [(0.0, 0.0, 1.0, 1.0)]
+        with patch("parking.detect_vehicles", return_value=(1.0, dets)):
+            free, _ = _is_free(jpeg, zones)
+        assert free is False
+
+
+# ---------------------------------------------------------------------------
+# _zone_coverage
+# ---------------------------------------------------------------------------
+
+
+class TestZoneCoverage:
+    def test_no_detections_returns_zero(self):
+        zones: list[Zone] = [(0.0, 0.0, 1.0, 1.0)]
+        assert _zone_coverage([], zones, 300, 300) == 0.0
+
+    def test_full_frame_zone_full_overlap(self):
+        zones: list[Zone] = [(0.0, 0.0, 1.0, 1.0)]
+        dets = [_det(0, 0, 300, 300)]
+        assert _zone_coverage(dets, zones, 300, 300) == 1.0
+
+    def test_detection_outside_zone_no_coverage(self):
+        # Zone is left half; detection is right half.
+        zones: list[Zone] = [(0.0, 0.0, 0.5, 1.0)]
+        dets = [_det(150, 0, 300, 300)]
+        assert _zone_coverage(dets, zones, 300, 300) == 0.0
+
+    def test_partial_overlap(self):
+        # Zone is right half (150–300); detection covers full width.
+        zones: list[Zone] = [(0.5, 0.0, 1.0, 1.0)]
+        dets = [_det(0, 0, 300, 300)]
+        # Intersection: x 150–300, y 0–300 = 150×300 = 45000; zone area = 150×300 = 45000
+        assert _zone_coverage(dets, zones, 300, 300) == 1.0
+
+    def test_capped_at_one(self):
+        # Two overlapping detections covering the same zone area.
+        zones: list[Zone] = [(0.0, 0.0, 1.0, 1.0)]
+        dets = [_det(0, 0, 300, 300), _det(0, 0, 300, 300)]
+        assert _zone_coverage(dets, zones, 300, 300) == 1.0
+
+    def test_empty_zones_returns_zero(self):
+        dets = [_det(0, 0, 100, 100)]
+        assert _zone_coverage(dets, [], 300, 300) == 0.0
+
+    def test_multiple_zones(self):
+        # Two non-overlapping zones each covering a quarter of the 300x300 image.
+        # Detection covers the top-left quarter only.
+        zones: list[Zone] = [(0.0, 0.0, 0.5, 0.5), (0.5, 0.5, 1.0, 1.0)]
+        dets = [_det(0, 0, 150, 150)]
+        total_zone_area = 150 * 150 + 150 * 150  # 45000
+        covered = 150 * 150  # 22500
+        expected = covered / total_zone_area  # 0.5
+        assert abs(_zone_coverage(dets, zones, 300, 300) - expected) < 1e-6
+
 
 # ---------------------------------------------------------------------------
 # _annotate_jpeg
@@ -161,3 +231,31 @@ class TestAnnotateJpeg:
         dets = [_det(0, 0, 50, 50), _det(100, 100, 200, 200)]
         result = _annotate_jpeg(_make_jpeg(), dets)
         assert Image.open(BytesIO(result)).format == "JPEG"
+
+    def test_with_zones_returns_valid_jpeg(self):
+        zones: list[Zone] = [(0.0, 0.5, 1.0, 1.0)]
+        result = _annotate_jpeg(_make_jpeg(300, 300), [], zones)
+        assert Image.open(BytesIO(result)).format == "JPEG"
+
+    def test_with_zones_dimensions_unchanged(self):
+        zones: list[Zone] = [(0.0, 0.5, 1.0, 1.0)]
+        result = _annotate_jpeg(_make_jpeg(600, 400), [_det(10, 10, 50, 50)], zones)
+        assert Image.open(BytesIO(result)).size == (600, 400)
+
+    def test_cell_outside_zone_not_highlighted(self):
+        # Zone covers only the bottom half; top-left cell should NOT be green.
+        jpeg = _make_jpeg(300, 300, color=(100, 0, 0))
+        zones: list[Zone] = [(0.0, 0.5, 1.0, 1.0)]
+        result = _annotate_jpeg(jpeg, [], zones)
+        img = Image.open(BytesIO(result)).convert("RGB")
+        r, g, b = img.getpixel((1, 1))  # top-left cell centre
+        assert r >= g, f"cell outside zone should not be green, got R={r} G={g} B={b}"
+
+    def test_cell_inside_zone_highlighted_when_free(self):
+        # Zone covers full frame; no detections → bottom-right area should be green.
+        jpeg = _make_jpeg(300, 300, color=(100, 0, 0))
+        zones: list[Zone] = [(0.0, 0.0, 1.0, 1.0)]
+        result = _annotate_jpeg(jpeg, [], zones)
+        img = Image.open(BytesIO(result)).convert("RGB")
+        r, g, b = img.getpixel((1, 1))
+        assert g > r, f"expected G > R in free zone cell, got R={r} G={g} B={b}"
