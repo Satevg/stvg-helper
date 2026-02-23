@@ -233,9 +233,9 @@ _GRID_ROWS = 4
 
 
 def _annotate_jpeg(jpeg: bytes, detections: list[Detection], zones: list[Zone] | None = None) -> bytes:
-    """Highlight parking zones or grid cells by occupancy.
+    """Highlight free parking zones in green.
 
-    When zones are provided, each zone rectangle is drawn green (free) or red (occupied).
+    When zones are provided, only free (unoccupied) zone rectangles are drawn in green.
     Without zones, falls back to highlighting unoccupied cells of a 6×4 grid.
     """
     img = Image.open(BytesIO(jpeg)).convert("RGB")
@@ -248,9 +248,7 @@ def _annotate_jpeg(jpeg: bytes, detections: list[Detection], zones: list[Zone] |
         for x1n, y1n, x2n, y2n in zones:
             zx1, zy1, zx2, zy2 = x1n * w, y1n * h, x2n * w, y2n * h
             occupied = any(d.x1 < zx2 and d.x2 > zx1 and d.y1 < zy2 and d.y2 > zy1 for d in detections)
-            if occupied:
-                draw.rectangle([zx1, zy1, zx2, zy2], fill=(255, 60, 60, 60), outline=(255, 60, 60, 255), width=2)
-            else:
+            if not occupied:
                 draw.rectangle([zx1, zy1, zx2, zy2], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=2)
     else:
         cell_w, cell_h = w // _GRID_COLS, h // _GRID_ROWS
