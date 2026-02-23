@@ -13,7 +13,7 @@ logger = Logger(child=True)
 # COCO class IDs for vehicles: car, motorcycle, bus, truck
 VEHICLE_CLASSES: frozenset[int] = frozenset({2, 3, 5, 7})
 
-CONFIDENCE_THRESHOLD = 0.3
+CONFIDENCE_THRESHOLD = 0.25
 IOU_THRESHOLD = 0.45
 INPUT_SIZE = 640
 

@@ -123,15 +123,22 @@ PARKING_CAMERAS: list[tuple[str, list[int]]] = [
 ]
 
 
-_ssm = SSMProvider()
+_ssm: SSMProvider | None = None
+
+
+def _get_ssm() -> SSMProvider:
+    global _ssm
+    if _ssm is None:
+        _ssm = SSMProvider()
+    return _ssm
 
 
 def get_watcher_username() -> str:
-    return str(_ssm.get(SSM_WATCHER_USERNAME_PARAM, decrypt=True, max_age=3600))
+    return str(_get_ssm().get(SSM_WATCHER_USERNAME_PARAM, decrypt=True, max_age=3600))
 
 
 def get_watcher_password() -> str:
-    return str(_ssm.get(SSM_WATCHER_PASSWORD_PARAM, decrypt=True, max_age=3600))
+    return str(_get_ssm().get(SSM_WATCHER_PASSWORD_PARAM, decrypt=True, max_age=3600))
 
 
 def fetch_cameras() -> list[dict[str, Any]]:
