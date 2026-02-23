@@ -107,4 +107,4 @@ Adjust `COVERAGE_THRESHOLD` in `bot/parking.py` based on the output.
 -   All secrets via SSM Parameter Store, never hardcoded
 -   Dependencies: add runtime deps to `[project.dependencies]`, dev-only deps to `[dependency-groups] dev` in `pyproject.toml`; commit `uv.lock`
 -   Linting: run `make lint` before committing; use `make black-fix` / `make isort-fix` to auto-fix formatting
--   When adding additional AWS resources, check if we're fitting into AWS free-tier limits
+-   When adding additional AWS resources or changing amount of usage for existing ones, check if we're fitting into AWS free-tier limits

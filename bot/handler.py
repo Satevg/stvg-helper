@@ -100,7 +100,7 @@ async def process_update(event: dict[str, Any]) -> dict[str, Any]:
     return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
 
-@logger.inject_lambda_context  # type: ignore[untyped-decorator]
+@logger.inject_lambda_context
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     global _loop
 
