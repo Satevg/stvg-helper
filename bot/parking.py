@@ -233,35 +233,36 @@ _GRID_ROWS = 4
 
 
 def _annotate_jpeg(jpeg: bytes, detections: list[Detection], zones: list[Zone] | None = None) -> bytes:
-    """Highlight grid cells with no vehicle overlap in green (potential free spots).
+    """Highlight parking zones or grid cells by occupancy.
 
-    When zones are provided, also draws a yellow outline around each zone and skips
-    grid cells that fall entirely outside every zone.
+    When zones are provided, each zone rectangle is drawn green (free) or red (occupied).
+    Without zones, falls back to highlighting unoccupied cells of a 6×4 grid.
     """
     img = Image.open(BytesIO(jpeg)).convert("RGB")
     w, h = img.size
-    cell_w, cell_h = w // _GRID_COLS, h // _GRID_ROWS
 
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
     if zones:
         for x1n, y1n, x2n, y2n in zones:
-            draw.rectangle([x1n * w, y1n * h, x2n * w - 1, y2n * h - 1], outline=(255, 220, 0, 255), width=2)
-
-    for row in range(_GRID_ROWS):
-        for col in range(_GRID_COLS):
-            cx1, cy1 = col * cell_w, row * cell_h
-            cx2, cy2 = cx1 + cell_w, cy1 + cell_h
-
-            if zones and not any(
-                x1n * w < cx2 and x2n * w > cx1 and y1n * h < cy2 and y2n * h > cy1 for x1n, y1n, x2n, y2n in zones
-            ):
-                continue
-
-            occupied = any(d.x1 < cx2 and d.x2 > cx1 and d.y1 < cy2 and d.y2 > cy1 for d in detections)
-            if not occupied:
-                draw.rectangle([cx1, cy1, cx2 - 1, cy2 - 1], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=3)
+            zx1, zy1, zx2, zy2 = x1n * w, y1n * h, x2n * w, y2n * h
+            occupied = any(d.x1 < zx2 and d.x2 > zx1 and d.y1 < zy2 and d.y2 > zy1 for d in detections)
+            if occupied:
+                draw.rectangle([zx1, zy1, zx2, zy2], fill=(255, 60, 60, 60), outline=(255, 60, 60, 255), width=2)
+            else:
+                draw.rectangle([zx1, zy1, zx2, zy2], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=2)
+    else:
+        cell_w, cell_h = w // _GRID_COLS, h // _GRID_ROWS
+        for row in range(_GRID_ROWS):
+            for col in range(_GRID_COLS):
+                cx1, cy1 = col * cell_w, row * cell_h
+                cx2, cy2 = cx1 + cell_w, cy1 + cell_h
+                occupied = any(d.x1 < cx2 and d.x2 > cx1 and d.y1 < cy2 and d.y2 > cy1 for d in detections)
+                if not occupied:
+                    draw.rectangle(
+                        [cx1, cy1, cx2 - 1, cy2 - 1], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=3
+                    )
 
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     buf = BytesIO()
@@ -290,8 +291,11 @@ async def parking_handler(update: Update, context: Any) -> None:
                 if jpeg is None:
                     continue
 
-                checked += 1
                 zones = PARKING_ZONES.get((building, cam_num))
+                if zones is None:
+                    continue
+
+                checked += 1
                 free, detections = await loop.run_in_executor(None, _is_free, jpeg, zones)
 
                 if free:
