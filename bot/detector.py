@@ -127,6 +127,7 @@ def postprocess(
 def detect_vehicles(jpeg_bytes: bytes) -> tuple[float, list[Detection]]:
     """Run vehicle detection on JPEG bytes. Returns (coverage_ratio, detections).
 
+    detections: list of Detection with normalized coordinates (0.0-1.0).
     coverage_ratio = total bounding-box area / image area (capped at 1.0).
     """
     session = _get_session()
@@ -140,6 +141,19 @@ def detect_vehicles(jpeg_bytes: bytes) -> tuple[float, list[Detection]]:
     if img_area == 0 or not detections:
         return 0.0, detections
 
+    # Convert detections to normalized coordinates for heatmap/logic
+    norm_detections = [
+        Detection(
+            x1=d.x1 / orig_w,
+            y1=d.y1 / orig_h,
+            x2=d.x2 / orig_w,
+            y2=d.y2 / orig_h,
+            confidence=d.confidence,
+            class_id=d.class_id,
+        )
+        for d in detections
+    ]
+
     covered = sum((d.x2 - d.x1) * (d.y2 - d.y1) for d in detections)
     coverage = min(covered / img_area, 1.0)
-    return coverage, detections
+    return coverage, norm_detections

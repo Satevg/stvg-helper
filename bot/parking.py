@@ -58,7 +58,7 @@ def get_watcher_password() -> str:
 
 
 def fetch_cameras() -> list[dict[str, Any]]:
-    """Login to Watcher and fetch the full list of cameras."""
+    """Login to Watcher and fetch the full list of cameras (handles pagination)."""
     session = requests.Session()
     login_resp = session.post(
         f"{WATCHER_URL}/vsaas/api/v2/auth/login",
@@ -68,14 +68,31 @@ def fetch_cameras() -> list[dict[str, Any]]:
     login_resp.raise_for_status()
     watcher_session = login_resp.json()["session"]
 
-    cameras_resp = session.get(
-        f"{WATCHER_URL}/vsaas/api/v2/cameras",
-        headers={"X-Vsaas-Session": watcher_session},
-        timeout=10,
-    )
-    cameras_resp.raise_for_status()
-    result: list[dict[str, Any]] = cameras_resp.json()
-    return result
+    all_cameras: list[dict[str, Any]] = []
+    limit = 100
+    offset = 0
+
+    while True:
+        cameras_resp = session.get(
+            f"{WATCHER_URL}/vsaas/api/v2/cameras",
+            headers={"X-Vsaas-Session": watcher_session},
+            params={"limit": limit, "offset": offset},
+            timeout=10,
+        )
+        cameras_resp.raise_for_status()
+        batch: list[dict[str, Any]] = cameras_resp.json()
+
+        if not batch:
+            break
+
+        all_cameras.extend(batch)
+        if len(batch) < limit:
+            break
+
+        offset += limit
+
+    logger.info("Fetched %d cameras total", len(all_cameras))
+    return all_cameras
 
 
 def _norm(s: str) -> str:
@@ -87,7 +104,6 @@ def find_camera(cameras: list[dict[str, Any]], building: str, cam_num: int) -> d
     """Match a human-readable building+cam number to a specific Watcher camera object."""
     building_norm = _norm(building)
     cam_suffix = f"камера {cam_num:02d}"
-    logger.debug(cameras)
     for cam in cameras:
         title = _norm(str(cam.get("title", "")))
         if building_norm in title and cam_suffix in title:
@@ -128,18 +144,22 @@ def _fetch_jpeg(cam: dict[str, Any]) -> bytes | None:
     return None
 
 
-def _is_free(jpeg_bytes: bytes, building: str, cam_num: int) -> tuple[bool, list[Detection], list[Any]]:
+def _is_free(
+    jpeg_bytes: bytes, building: str, cam_num: int, readonly: bool = False
+) -> tuple[bool, list[Detection], list[Any]]:
     """Determine if parking is free using learned Heatmap slots.
 
     1. Runs vehicle detection on the current snapshot.
-    2. Updates the Heatmap in DynamoDB (learning phase).
+    2. Updates the Heatmap in DynamoDB (learning phase) - skipped if readonly.
     3. Fetches confirmed slots (areas where cars usually park).
     4. Compares detections with slots. If a slot has NO vehicle, it is FREE.
     """
     _, detections = detect_vehicles(jpeg_bytes)
 
-    # Passive learning: Every scan (manual or automated) updates the parking clusters
-    update_heatmap(building, cam_num, detections)
+    # Passive learning: Every scan (manual or automated) updates the parking clusters.
+    # We skip this for manual requests to reduce latency.
+    if not readonly:
+        update_heatmap(building, cam_num, detections)
 
     # Active detection: Use confirmed (seen 3+ times) hotspots to check for emptiness
     slots = get_confirmed_slots(building, cam_num)
@@ -161,12 +181,18 @@ def _is_free(jpeg_bytes: bytes, building: str, cam_num: int) -> tuple[bool, list
 def _annotate_jpeg(jpeg: bytes, detections: list[Detection], free_slots: list[Any]) -> bytes:
     """Draw semi-transparent green rectangles over learned spots that are currently empty."""
     img = Image.open(BytesIO(jpeg)).convert("RGB")
+    w, h = img.size
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
     for s in free_slots:
-        # s is a Slot object from heatmap.py
-        draw.rectangle([s.x1, s.y1, s.x2, s.y2], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=2)
+        # Scale normalized coordinates back to pixels for drawing
+        draw.rectangle(
+            [s.x1 * w, s.y1 * h, s.x2 * w, s.y2 * h],
+            fill=(0, 255, 0, 60),
+            outline=(0, 255, 0, 255),
+            width=2,
+        )
 
     # Blend the overlay with the original image
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
@@ -235,10 +261,13 @@ async def parking_handler(update: Update, context: Any) -> None:
                 if jpeg is None:
                     continue
 
-                checked += 1
-                free, detections, free_slots = await loop.run_in_executor(None, _is_free, jpeg, building, cam_num)
-
-                if free:
+                                checked += 1
+                                free, detections, free_slots = await loop.run_in_executor(
+                                    None, _is_free, jpeg, building, cam_num, True  # readonly=True
+                                )
+                
+                                if free:
+                
                     logger.info("Free spot found at %s — Камера %02d", building, cam_num)
                     photo = _annotate_jpeg(jpeg, detections, free_slots)
                     await status_msg.delete()

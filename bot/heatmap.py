@@ -87,21 +87,27 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
         # 1. Fetch current learned state for this camera
         response = table.get_item(Key={"PK": pk, "SK": sk})
         slots_data = response.get("Item", {}).get("slots", [])
-        slots = [
-            Slot(
-                x1=float(s["x1"]),
-                y1=float(s["y1"]),
-                x2=float(s["x2"]),
-                y2=float(s["y2"]),
-                count=int(s["count"]),
-                last_seen=float(s["last_seen"]),
+
+        # Load and FILTER OUT legacy pixel-based data (> 1.0)
+        slots = []
+        for s in slots_data:
+            x1 = float(s["x1"])
+            if x1 > 1.0:
+                continue  # Skip zombie pixel data
+
+            slots.append(
+                Slot(
+                    x1=x1,
+                    y1=float(s["y1"]),
+                    x2=float(s["x2"]),
+                    y2=float(s["y2"]),
+                    count=int(s["count"]),
+                    last_seen=float(s["last_seen"]),
+                )
             )
-            for s in slots_data
-        ]
 
         # 2. Iterate through current vehicle detections and update clusters
         for d in detections:
-            # Find the closest existing slot for this detection
             best_slot = None
             min_dist = float("inf")
             for s in slots:
@@ -110,10 +116,7 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
                     min_dist = dist
                     best_slot = s
 
-            # If the detection is close to an existing slot, merge it
             if best_slot and min_dist < PROXIMITY_THRESHOLD:
-                # Update the slot coordinates using a moving average (alpha)
-                # This causes the slot to drift toward the center of how people actually park.
                 alpha = 1.0 / (best_slot.count + 1)
                 best_slot.x1 = (1 - alpha) * best_slot.x1 + alpha * d.x1
                 best_slot.y1 = (1 - alpha) * best_slot.y1 + alpha * d.y1
@@ -122,24 +125,45 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
                 best_slot.count += 1
                 best_slot.last_seen = now
             else:
-                # If no existing slot is nearby, create a new "potential" slot
                 slots.append(Slot(x1=d.x1, y1=d.y1, x2=d.x2, y2=d.y2, count=1, last_seen=now))
 
-        # 3. Garbage Collection: Remove slots not seen for 7 days (e.g., snow piles, temporary obstacles)
+        # 3. SELF-CLEANING: Merge clusters that are too close to each other
+        # This prevents "cluster explosion" if detections are jittery.
+        pruned_slots: list[Slot] = []
+        for s in sorted(slots, key=lambda x: x.count, reverse=True):
+            # See if this slot is a duplicate of one we've already kept
+            is_duplicate = False
+            for kept in pruned_slots:
+                # If centers are within half the proximity threshold, it's a duplicate
+                cx1, cy1 = (s.x1 + s.x2) / 2.0, (s.y1 + s.y2) / 2.0
+                cx2, cy2 = (kept.x1 + kept.x2) / 2.0, (kept.y1 + kept.y2) / 2.0
+                if ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5 < (PROXIMITY_THRESHOLD / 2):
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                pruned_slots.append(s)
+
+        slots = pruned_slots
+
+        # 4. Garbage Collection: Remove slots not seen for 7 days
         week_ago = now - (7 * 24 * 3600)
         slots = [s for s in slots if s.last_seen > week_ago]
 
-        # 4. Persistence: Save the updated clusters back to DynamoDB
+        # 5. HARD CAP: Keep only the top 50 most frequent clusters
+        # (No camera in this list has 50+ parking spots)
+        slots = sorted(slots, key=lambda x: x.count, reverse=True)[:50]
+
+        # 6. Persistence: Save the updated clusters back to DynamoDB
         decimal_slots = []
         for s in slots:
             decimal_slots.append(
                 {
-                    "x1": Decimal(str(s.x1)),
-                    "y1": Decimal(str(s.y1)),
-                    "x2": Decimal(str(s.x2)),
-                    "y2": Decimal(str(s.y2)),
+                    "x1": Decimal(str(round(s.x1, 4))),
+                    "y1": Decimal(str(round(s.y1, 4))),
+                    "x2": Decimal(str(round(s.x2, 4))),
+                    "y2": Decimal(str(round(s.y2, 4))),
                     "count": s.count,
-                    "last_seen": Decimal(str(s.last_seen)),
+                    "last_seen": Decimal(str(int(s.last_seen))),
                 }
             )
 
