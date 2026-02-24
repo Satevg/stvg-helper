@@ -261,13 +261,12 @@ async def parking_handler(update: Update, context: Any) -> None:
                 if jpeg is None:
                     continue
 
-                                checked += 1
-                                free, detections, free_slots = await loop.run_in_executor(
-                                    None, _is_free, jpeg, building, cam_num, True  # readonly=True
-                                )
-                
-                                if free:
-                
+                checked += 1
+                free, detections, free_slots = await loop.run_in_executor(
+                    None, _is_free, jpeg, building, cam_num, True  # readonly=True
+                )
+
+                if free:
                     logger.info("Free spot found at %s — Камера %02d", building, cam_num)
                     photo = _annotate_jpeg(jpeg, detections, free_slots)
                     await status_msg.delete()
