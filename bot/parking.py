@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 import re
 from io import BytesIO
 from typing import Any
@@ -9,116 +10,28 @@ import requests
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.utilities.parameters import SSMProvider
 from detector import Detection, detect_vehicles
+from heatmap import get_confirmed_slots, update_heatmap
 from PIL import Image, ImageDraw
 from telegram import Update
 
 logger = Logger(child=True)
 
+# SSM Parameter Store names for credentials
 SSM_WATCHER_USERNAME_PARAM = os.environ.get("SSM_WATCHER_USERNAME_PARAM", "/stvg-helper/watcher-username")
 SSM_WATCHER_PASSWORD_PARAM = os.environ.get("SSM_WATCHER_PASSWORD_PARAM", "/stvg-helper/watcher-password")
 
+# Base URL for Flussonic Watcher
 WATCHER_URL = os.environ.get("WATCHER_URL", "https://video.unet.by")
 
-# Coverage ratio threshold: below this fraction of frame area occupied by vehicles → free spot likely
-COVERAGE_THRESHOLD = 0.40
-
-# Normalised (x1, y1, x2, y2) rectangle defining the drivable ground area of a camera frame.
-Zone = tuple[float, float, float, float]
-
-# Per-camera zone rectangles (normalised 0.0–1.0). Cameras not listed use the full frame.
-# ("Building Name", camera_number): [(x1, y1, x2, y2), ...]
-PARKING_ZONES: dict[tuple[str, int], list[Zone]] = {
-    # Fill in after running scripts/zone_editor.py for each camera.
-    ("Авиационная 10", 1): [
-        (0.0508, 0.3348, 0.1592, 0.5393),
-        (0.1817, 0.3215, 0.2875, 0.5052),
-        (0.3092, 0.3467, 0.395, 0.5407),
-        (0.4183, 0.3259, 0.515, 0.5304),
-        (0.5242, 0.363, 0.5975, 0.5289),
-        (0.6058, 0.3733, 0.7, 0.5274),
-        (0.7108, 0.3822, 0.7675, 0.5126),
-        (0.7767, 0.3926, 0.865, 0.5393),
-    ],
-    ("Авиационная 10", 3): [
-        (0.0325, 0.2104, 0.0783, 0.3333),
-        (0.0992, 0.1911, 0.1367, 0.3244),
-        (0.1525, 0.1926, 0.2067, 0.3244),
-        (0.2275, 0.1837, 0.2858, 0.3067),
-        (0.3325, 0.1393, 0.4017, 0.2874),
-        (0.4558, 0.1704, 0.5367, 0.3185),
-        (0.5683, 0.1111, 0.6708, 0.2933),
-        (0.6925, 0.1126, 0.795, 0.3052),
-    ],
-    ("Авиационная 10", 4): [
-        (0.07, 0.157, 0.1675, 0.36),
-        (0.1792, 0.1185, 0.2958, 0.2874),
-        (0.0, 0.1467, 0.0575, 0.3319),
-        (0.2958, 0.1007, 0.3883, 0.2622),
-        (0.4033, 0.1067, 0.5033, 0.2756),
-        (0.5183, 0.1333, 0.5958, 0.2933),
-        (0.6167, 0.1333, 0.6725, 0.2919),
-        (0.6842, 0.1393, 0.7325, 0.2815),
-        (0.7408, 0.1807, 0.7742, 0.2874),
-        (0.7908, 0.1926, 0.8242, 0.2889),
-    ],
-    ("Авиационная 10", 6): [
-        (0.0075, 0.1496, 0.095, 0.3526),
-        (0.52, 0.0726, 0.5967, 0.203),
-        (0.5933, 0.0859, 0.6483, 0.2119),
-        (0.6542, 0.1052, 0.7, 0.1985),
-        (0.71, 0.1274, 0.7625, 0.2133),
-    ],
-    ("Авиационная 10", 8): [
-        (0.4525, 0.0504, 0.5033, 0.16),
-        (0.53, 0.0519, 0.5667, 0.1659),
-        (0.61, 0.0741, 0.6442, 0.1689),
-        (0.685, 0.083, 0.7483, 0.1807),
-        (0.7708, 0.1407, 0.82, 0.2459),
-        (0.85, 0.1822, 0.8983, 0.3185),
-        (0.94, 0.2148, 0.995, 0.3793),
-        (0.3875, 0.0593, 0.4192, 0.1467),
-        (0.3475, 0.0681, 0.3742, 0.1259),
-    ],
-    ("Авиационная 10", 9): [
-        (0.9167, 0.1659, 0.985, 0.3881),
-        (0.83, 0.1111, 0.895, 0.3037),
-        (0.7217, 0.0844, 0.79, 0.2904),
-        (0.6108, 0.0548, 0.7033, 0.2148),
-        (0.5192, 0.0444, 0.5792, 0.1881),
-        (0.4342, 0.0519, 0.485, 0.1644),
-        (0.3842, 0.0533, 0.4233, 0.1615),
-        (0.3042, 0.0533, 0.355, 0.1452),
-    ],
-    ("Авиационная 10", 10): [
-        (0.0525, 0.3585, 0.1567, 0.5941),
-        (0.1725, 0.3985, 0.2725, 0.5615),
-        (0.2958, 0.3393, 0.3983, 0.4815),
-        (0.4192, 0.3096, 0.5025, 0.48),
-        (0.5275, 0.2844, 0.6092, 0.4533),
-        (0.6408, 0.3007, 0.695, 0.4193),
-        (0.7183, 0.2859, 0.7817, 0.3867),
-        (0.8058, 0.2726, 0.87, 0.3896),
-        (0.8892, 0.2563, 0.9475, 0.3674),
-    ],
-    ("Авиационная 10", 11): [
-        (0.6783, 0.3511, 0.7625, 0.5007),
-        (0.5942, 0.3526, 0.6492, 0.4815),
-        (0.5125, 0.3348, 0.5742, 0.4563),
-        (0.4475, 0.3333, 0.4925, 0.4474),
-        (0.3158, 0.32, 0.3658, 0.4252),
-        (0.1533, 0.3274, 0.1883, 0.4252),
-        (0.2117, 0.3348, 0.26, 0.4222),
-    ],
-}
-
-# (building title prefix, camera numbers) in search priority order — stop at first free spot
+# (building title prefix, camera numbers) in search priority order.
+# The bot will stop at the first camera that reports a free parking spot.
 PARKING_CAMERAS: list[tuple[str, list[int]]] = [
     ("Авиационная 8", [1, 2, 3, 4, 7, 12]),
     ("Авиационная 10", [1, 3, 4, 6, 8, 9, 10, 11]),
-    ("Б. Райт 1", [2, 3, 10]),
-    ("Б. Райт 3", [1, 2, 3]),
-    ("Б. Райт 5", [2, 5, 8]),
-    ("Б. Райт 7", [3, 4, 7, 8, 9]),
+    ("Б.Райт 1", [2, 3, 10]),
+    ("Б.Райт 3", [1, 2, 3]),
+    ("Б.Райт 5", [2, 5, 8]),
+    ("Б.Райт 7", [3, 4, 7, 8, 9]),
     ("Яковлева 1", [2, 4, 7]),
 ]
 
@@ -127,6 +40,7 @@ _ssm: SSMProvider | None = None
 
 
 def _get_ssm() -> SSMProvider:
+    """Singleton for SSM provider."""
     global _ssm
     if _ssm is None:
         _ssm = SSMProvider()
@@ -134,14 +48,17 @@ def _get_ssm() -> SSMProvider:
 
 
 def get_watcher_username() -> str:
+    """Fetch decrypted Watcher username from SSM."""
     return str(_get_ssm().get(SSM_WATCHER_USERNAME_PARAM, decrypt=True, max_age=3600))
 
 
 def get_watcher_password() -> str:
+    """Fetch decrypted Watcher password from SSM."""
     return str(_get_ssm().get(SSM_WATCHER_PASSWORD_PARAM, decrypt=True, max_age=3600))
 
 
 def fetch_cameras() -> list[dict[str, Any]]:
+    """Login to Watcher and fetch the full list of cameras."""
     session = requests.Session()
     login_resp = session.post(
         f"{WATCHER_URL}/vsaas/api/v2/auth/login",
@@ -167,8 +84,10 @@ def _norm(s: str) -> str:
 
 
 def find_camera(cameras: list[dict[str, Any]], building: str, cam_num: int) -> dict[str, Any] | None:
+    """Match a human-readable building+cam number to a specific Watcher camera object."""
     building_norm = _norm(building)
     cam_suffix = f"камера {cam_num:02d}"
+    logger.debug(cameras)
     for cam in cameras:
         title = _norm(str(cam.get("title", "")))
         if building_norm in title and cam_suffix in title:
@@ -192,6 +111,7 @@ def _jpeg_from_mp4(mp4_bytes: bytes) -> bytes | None:
 
 
 def _fetch_jpeg(cam: dict[str, Any]) -> bytes | None:
+    """Fetch a short preview MP4 from the camera's streamer and extract a frame."""
     name = cam["name"]
     token = cam["playback_config"]["token"]
     server = cam["streamer_hostname"]
@@ -208,74 +128,93 @@ def _fetch_jpeg(cam: dict[str, Any]) -> bytes | None:
     return None
 
 
-def _zone_coverage(detections: list[Detection], zones: list[Zone], img_w: int, img_h: int) -> float:
-    """Coverage ratio of vehicle detections within the given zone rectangles."""
-    zone_area = sum((x2 - x1) * img_w * (y2 - y1) * img_h for x1, y1, x2, y2 in zones)
-    if zone_area <= 0:
-        return 0.0
-    covered = 0.0
-    for d in detections:
-        for x1n, y1n, x2n, y2n in zones:
-            zx1, zy1 = x1n * img_w, y1n * img_h
-            zx2, zy2 = x2n * img_w, y2n * img_h
-            ix1, iy1 = max(d.x1, zx1), max(d.y1, zy1)
-            ix2, iy2 = min(d.x2, zx2), min(d.y2, zy2)
-            if ix2 > ix1 and iy2 > iy1:
-                covered += (ix2 - ix1) * (iy2 - iy1)
-    return min(covered / zone_area, 1.0)
+def _is_free(jpeg_bytes: bytes, building: str, cam_num: int) -> tuple[bool, list[Detection], list[Any]]:
+    """Determine if parking is free using learned Heatmap slots.
 
-
-def _is_free(jpeg_bytes: bytes, zones: list[Zone] | None = None) -> tuple[bool, list[Detection]]:
-    """Return (is_free, detections). Free when vehicle coverage is below threshold."""
-    coverage, detections = detect_vehicles(jpeg_bytes)
-    if zones:
-        img = Image.open(BytesIO(jpeg_bytes))
-        coverage = _zone_coverage(detections, zones, *img.size)
-    logger.info("Coverage: %.2f (zones=%d, detections=%d)", coverage, len(zones or []), len(detections))
-    return coverage < COVERAGE_THRESHOLD, detections
-
-
-_GRID_COLS = 6
-_GRID_ROWS = 4
-
-
-def _annotate_jpeg(jpeg: bytes, detections: list[Detection], zones: list[Zone] | None = None) -> bytes:
-    """Highlight free parking zones in green.
-
-    When zones are provided, only free (unoccupied) zone rectangles are drawn in green.
-    Without zones, falls back to highlighting unoccupied cells of a 6×4 grid.
+    1. Runs vehicle detection on the current snapshot.
+    2. Updates the Heatmap in DynamoDB (learning phase).
+    3. Fetches confirmed slots (areas where cars usually park).
+    4. Compares detections with slots. If a slot has NO vehicle, it is FREE.
     """
-    img = Image.open(BytesIO(jpeg)).convert("RGB")
-    w, h = img.size
+    _, detections = detect_vehicles(jpeg_bytes)
 
+    # Passive learning: Every scan (manual or automated) updates the parking clusters
+    update_heatmap(building, cam_num, detections)
+
+    # Active detection: Use confirmed (seen 3+ times) hotspots to check for emptiness
+    slots = get_confirmed_slots(building, cam_num)
+    if not slots:
+        # No confirmed slots yet (bot is still learning this camera)
+        return False, detections, []
+
+    # A spot is free if a confirmed slot has NO vehicle detection box overlapping it
+    free_slots = []
+    for s in slots:
+        occupied = any(d.x1 < s.x2 and d.x2 > s.x1 and d.y1 < s.y2 and d.y2 > s.y1 for d in detections)
+        if not occupied:
+            free_slots.append(s)
+
+    logger.info("Heatmap for %s #%d: %d confirmed slots, %d free", building, cam_num, len(slots), len(free_slots))
+    return len(free_slots) > 0, detections, free_slots
+
+
+def _annotate_jpeg(jpeg: bytes, detections: list[Detection], free_slots: list[Any]) -> bytes:
+    """Draw semi-transparent green rectangles over learned spots that are currently empty."""
+    img = Image.open(BytesIO(jpeg)).convert("RGB")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    if zones:
-        for x1n, y1n, x2n, y2n in zones:
-            zx1, zy1, zx2, zy2 = x1n * w, y1n * h, x2n * w, y2n * h
-            occupied = any(d.x1 < zx2 and d.x2 > zx1 and d.y1 < zy2 and d.y2 > zy1 for d in detections)
-            if not occupied:
-                draw.rectangle([zx1, zy1, zx2, zy2], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=2)
-    else:
-        cell_w, cell_h = w // _GRID_COLS, h // _GRID_ROWS
-        for row in range(_GRID_ROWS):
-            for col in range(_GRID_COLS):
-                cx1, cy1 = col * cell_w, row * cell_h
-                cx2, cy2 = cx1 + cell_w, cy1 + cell_h
-                occupied = any(d.x1 < cx2 and d.x2 > cx1 and d.y1 < cy2 and d.y2 > cy1 for d in detections)
-                if not occupied:
-                    draw.rectangle(
-                        [cx1, cy1, cx2 - 1, cy2 - 1], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=3
-                    )
+    for s in free_slots:
+        # s is a Slot object from heatmap.py
+        draw.rectangle([s.x1, s.y1, s.x2, s.y2], fill=(0, 255, 0, 60), outline=(0, 255, 0, 255), width=2)
 
+    # Blend the overlay with the original image
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     buf = BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
 
 
+async def update_heatmap_background() -> None:
+    """Automated learning task triggered by EventBridge (e.g., every 5 minutes).
+
+    To stay within AWS Free Tier limits and Lambda timeouts, this task scans
+    2 random cameras from the total list per invocation.
+    """
+    logger.info("Starting background heatmap update")
+    loop = asyncio.get_running_loop()
+
+    try:
+        cameras = await loop.run_in_executor(None, fetch_cameras)
+
+        # Build a flat list of all building/camera pairs
+        all_cams = []
+        for building, cam_nums in PARKING_CAMERAS:
+            for cn in cam_nums:
+                all_cams.append((building, cn))
+
+        # Sample a subset to process
+        target_cams = random.sample(all_cams, min(len(all_cams), 2))
+
+        for building, cam_num in target_cams:
+            cam = find_camera(cameras, building, cam_num)
+            if cam is None:
+                continue
+
+            jpeg = await loop.run_in_executor(None, _fetch_jpeg, cam)
+            if jpeg is None:
+                continue
+
+            # This call updates the heatmap passive database
+            await loop.run_in_executor(None, _is_free, jpeg, building, cam_num)
+            logger.info("Background update complete for %s #%d", building, cam_num)
+
+    except Exception:
+        logger.exception("Error in background heatmap update")
+
+
 async def parking_handler(update: Update, context: Any) -> None:
+    """Telegram handler triggered by the 'Parking' button."""
     if update.message is None:
         return
     status_msg = await update.message.reply_text("Ищу свободное место...")
@@ -283,9 +222,9 @@ async def parking_handler(update: Update, context: Any) -> None:
 
     try:
         cameras = await loop.run_in_executor(None, fetch_cameras)
-
         checked = 0
 
+        # Scan buildings in priority order
         for building, cam_nums in PARKING_CAMERAS:
             for cam_num in cam_nums:
                 cam = find_camera(cameras, building, cam_num)
@@ -296,16 +235,12 @@ async def parking_handler(update: Update, context: Any) -> None:
                 if jpeg is None:
                     continue
 
-                zones = PARKING_ZONES.get((building, cam_num))
-                if zones is None:
-                    continue
-
                 checked += 1
-                free, detections = await loop.run_in_executor(None, _is_free, jpeg, zones)
+                free, detections, free_slots = await loop.run_in_executor(None, _is_free, jpeg, building, cam_num)
 
                 if free:
                     logger.info("Free spot found at %s — Камера %02d", building, cam_num)
-                    photo = _annotate_jpeg(jpeg, detections, zones)
+                    photo = _annotate_jpeg(jpeg, detections, free_slots)
                     await status_msg.delete()
                     await update.message.reply_photo(
                         photo=BytesIO(photo),
@@ -317,6 +252,8 @@ async def parking_handler(update: Update, context: Any) -> None:
             logger.warning("No JPEG snapshots were available from any matched camera")
             await status_msg.edit_text("Нет доступных снимков для анализа.")
         else:
+            # Note: During the first ~3 scans per camera, the bot will report nothing
+            # found until it has confirmed its first parking slots.
             await status_msg.edit_text("Свободных мест не найдено.")
 
     except Exception:

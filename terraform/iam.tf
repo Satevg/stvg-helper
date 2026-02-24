@@ -33,6 +33,19 @@ data "aws_iam_policy_document" "lambda_permissions" {
       aws_ssm_parameter.watcher_password.arn,
     ]
   }
+
+  statement {
+    sid = "DynamoDB"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
+      "dynamodb:BatchWriteItem",
+    ]
+    resources = [aws_dynamodb_table.bot.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "lambda" {

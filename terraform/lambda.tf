@@ -13,6 +13,7 @@ resource "aws_lambda_function" "bot" {
       SSM_WATCHER_USERNAME_PARAM  = aws_ssm_parameter.watcher_username.name
       SSM_WATCHER_PASSWORD_PARAM  = aws_ssm_parameter.watcher_password.name
       WATCHER_URL                 = "https://video.unet.by"
+      DYNAMODB_TABLE              = aws_dynamodb_table.bot.name
       POWERTOOLS_SERVICE_NAME     = "stvg-helper"
     }
   }

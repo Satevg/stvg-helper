@@ -6,7 +6,7 @@ from typing import Any, TypeAlias
 import anthropic
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.utilities.parameters import SSMProvider
-from parking import parking_handler
+from parking import parking_handler, update_heatmap_background
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
@@ -105,8 +105,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     global _loop
 
     if event.get("source") == "aws.events":
-        logger.info("Warmup ping — priming application singleton")
-        get_application()
+        logger.info("Warmup ping — starting background learning")
+        if _loop is None or _loop.is_closed():
+            _loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_loop)
+
+        _loop.run_until_complete(update_heatmap_background())
         return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
     if not event.get("body"):
