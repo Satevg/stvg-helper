@@ -19,7 +19,15 @@ PROXIMITY_THRESHOLD = 0.05
 
 # Minimum number of times a vehicle must be seen in a spot to "confirm" it as a real slot.
 # This filters out temporary stops, moving cars, or transient delivery vehicles.
-CONFIRMATION_THRESHOLD = 3
+CONFIRMATION_THRESHOLD = 5
+
+# Floor for the moving average alpha — new data always has at least this much influence.
+# Prevents slots from "freezing" after many observations.
+ALPHA_FLOOR = 0.02
+
+# Minimum IoU overlap required (in addition to center distance) to merge a detection into a slot.
+# Prevents merging differently-sized vehicles that happen to have nearby centers.
+MERGE_IOU_THRESHOLD = 0.3
 
 
 @dataclass
@@ -35,12 +43,29 @@ class Slot:
 
     def distance_to(self, d: Detection) -> float:
         """Calculate Euclidean distance between the center of this slot and a new detection."""
-        # Calculate center points for both
         cx1, cy1 = (self.x1 + self.x2) / 2.0, (self.y1 + self.y2) / 2.0
         cx2, cy2 = (d.x1 + d.x2) / 2.0, (d.y1 + d.y2) / 2.0
-        # Euclidean distance in normalized coordinates
         dist: float = ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
         return dist
+
+    def iou(self, d: Detection) -> float:
+        """Calculate IoU (Intersection over Union) between this slot and a detection."""
+        return _box_iou(self.x1, self.y1, self.x2, self.y2, d.x1, d.y1, d.x2, d.y2)
+
+
+def _box_iou(ax1: float, ay1: float, ax2: float, ay2: float, bx1: float, by1: float, bx2: float, by2: float) -> float:
+    """Calculate IoU between two axis-aligned bounding boxes."""
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    union = area_a + area_b - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
 
 
 def _get_table() -> Any:
@@ -116,8 +141,8 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
                     min_dist = dist
                     best_slot = s
 
-            if best_slot and min_dist < PROXIMITY_THRESHOLD:
-                alpha = 1.0 / (best_slot.count + 1)
+            if best_slot and min_dist < PROXIMITY_THRESHOLD and best_slot.iou(d) >= MERGE_IOU_THRESHOLD:
+                alpha = max(1.0 / (best_slot.count + 1), ALPHA_FLOOR)
                 best_slot.x1 = (1 - alpha) * best_slot.x1 + alpha * d.x1
                 best_slot.y1 = (1 - alpha) * best_slot.y1 + alpha * d.y1
                 best_slot.x2 = (1 - alpha) * best_slot.x2 + alpha * d.x2
@@ -167,7 +192,8 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
                 }
             )
 
-        table.put_item(Item={"PK": pk, "SK": sk, "slots": decimal_slots, "updated_at": int(now)})
+        ttl = int(now) + 14 * 86400  # Safety net: auto-expire if not updated for 14 days
+        table.put_item(Item={"PK": pk, "SK": sk, "slots": decimal_slots, "updated_at": int(now), "ttl": ttl})
         logger.info("Updated heatmap for %s #%d: %d clusters", building, cam_num, len(slots))
 
     except Exception:

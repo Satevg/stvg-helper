@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import re
+import time
 from io import BytesIO
 from typing import Any
 
@@ -37,6 +38,17 @@ PARKING_CAMERAS: list[tuple[str, list[int]]] = [
 
 
 _ssm: SSMProvider | None = None
+
+# Camera cache (Phase 1A): avoid re-fetching the camera list on every warm invocation
+_cameras_cache: list[dict[str, Any]] | None = None
+_cameras_cache_ts: float = 0.0
+_CAMERAS_CACHE_TTL: float = 300.0  # 5 minutes
+
+# Camera lookup index (Phase 1B): O(1) lookups instead of O(N) scans
+_cameras_index: dict[tuple[str, int], dict[str, Any]] = {}
+
+# Staleness tracking (Phase 3A): prioritize cameras not scanned recently
+_last_scanned: dict[tuple[str, int], float] = {}
 
 
 def _get_ssm() -> SSMProvider:
@@ -95,13 +107,51 @@ def fetch_cameras() -> list[dict[str, Any]]:
     return all_cameras
 
 
+def fetch_cameras_cached() -> list[dict[str, Any]]:
+    """Return the camera list, using a module-level cache with 5-minute TTL."""
+    global _cameras_cache, _cameras_cache_ts
+    now = time.monotonic()
+    if _cameras_cache is not None and (now - _cameras_cache_ts) < _CAMERAS_CACHE_TTL:
+        logger.info("Using cached cameras list (%d cameras)", len(_cameras_cache))
+        return _cameras_cache
+    cameras = fetch_cameras()
+    _cameras_cache = cameras
+    _cameras_cache_ts = now
+    _build_index(cameras)
+    return cameras
+
+
 def _norm(s: str) -> str:
     """Lowercase and collapse dots/spaces to single space for fuzzy title matching."""
     return re.sub(r"[.\s]+", " ", s).lower().strip()
 
 
+def _build_index(cameras: list[dict[str, Any]]) -> None:
+    """Build a lookup index from (building, cam_num) to camera dict."""
+    global _cameras_index
+    _cameras_index = {}
+    for cam in cameras:
+        title = _norm(str(cam.get("title", "")))
+        for building, cam_nums in PARKING_CAMERAS:
+            building_norm = _norm(building)
+            if building_norm not in title:
+                continue
+            for cn in cam_nums:
+                cam_suffix = f"камера {cn:02d}"
+                if cam_suffix in title:
+                    _cameras_index[(building, cn)] = cam
+
+
 def find_camera(cameras: list[dict[str, Any]], building: str, cam_num: int) -> dict[str, Any] | None:
     """Match a human-readable building+cam number to a specific Watcher camera object."""
+    # Fast path: use pre-built index if available
+    if _cameras_index:
+        result = _cameras_index.get((building, cam_num))
+        if result is None:
+            logger.warning("No match for '%s — Камера %02d'", building, cam_num)
+        return result
+
+    # Fallback: linear scan (cold start before first fetch_cameras_cached call)
     building_norm = _norm(building)
     cam_suffix = f"камера {cam_num:02d}"
     for cam in cameras:
@@ -178,6 +228,32 @@ def _is_free(
     return len(free_slots) > 0, detections, free_slots
 
 
+async def _check_camera(
+    cam: dict[str, Any], building: str, cam_num: int
+) -> tuple[bool, bytes | None, list[Detection], list[Any]]:
+    """Fetch a JPEG from a camera and check if parking is free (parallel-safe)."""
+    loop = asyncio.get_running_loop()
+    t0 = time.monotonic()
+    jpeg = await loop.run_in_executor(None, _fetch_jpeg, cam)
+    t_fetch = time.monotonic() - t0
+    if jpeg is None:
+        logger.info("fetch_jpeg for %s #%d: %.1fms (no image)", building, cam_num, t_fetch * 1000)
+        return False, None, [], []
+
+    t1 = time.monotonic()
+    free, detections, free_slots = await loop.run_in_executor(None, _is_free, jpeg, building, cam_num, True)
+    t_check = time.monotonic() - t1
+    logger.info(
+        "check_camera %s #%d: fetch=%.0fms is_free=%.0fms free=%s",
+        building,
+        cam_num,
+        t_fetch * 1000,
+        t_check * 1000,
+        free,
+    )
+    return free, jpeg, detections, free_slots
+
+
 def _annotate_jpeg(jpeg: bytes, detections: list[Detection], free_slots: list[Any]) -> bytes:
     """Draw semi-transparent green rectangles over learned spots that are currently empty."""
     img = Image.open(BytesIO(jpeg)).convert("RGB")
@@ -204,25 +280,35 @@ def _annotate_jpeg(jpeg: bytes, detections: list[Detection], free_slots: list[An
 async def update_heatmap_background() -> None:
     """Automated learning task triggered by EventBridge (e.g., every 5 minutes).
 
-    To stay within AWS Free Tier limits and Lambda timeouts, this task scans
-    2 random cameras from the total list per invocation.
+    Scans 4 cameras per invocation using staleness-weighted selection:
+    cameras not scanned recently get much higher selection probability.
     """
     logger.info("Starting background heatmap update")
     loop = asyncio.get_running_loop()
 
     try:
-        cameras = await loop.run_in_executor(None, fetch_cameras)
+        cameras = await loop.run_in_executor(None, fetch_cameras_cached)
 
         # Build a flat list of all building/camera pairs
-        all_cams = []
+        all_cams: list[tuple[str, int]] = []
         for building, cam_nums in PARKING_CAMERAS:
             for cn in cam_nums:
                 all_cams.append((building, cn))
 
-        # Sample a subset to process
-        target_cams = random.sample(all_cams, min(len(all_cams), 2))
+        # Staleness-weighted selection: cameras not scanned recently get higher weight
+        now = time.monotonic()
+        weights = [now - _last_scanned.get(cam_key, 0.0) for cam_key in all_cams]
+        k = min(len(all_cams), 4)
+        target_cams = random.choices(all_cams, weights=weights, k=k)
+        # Deduplicate (choices can repeat)
+        seen: set[tuple[str, int]] = set()
+        unique_targets: list[tuple[str, int]] = []
+        for cam_key in target_cams:
+            if cam_key not in seen:
+                seen.add(cam_key)
+                unique_targets.append(cam_key)
 
-        for building, cam_num in target_cams:
+        for building, cam_num in unique_targets:
             cam = find_camera(cameras, building, cam_num)
             if cam is None:
                 continue
@@ -233,6 +319,7 @@ async def update_heatmap_background() -> None:
 
             # This call updates the heatmap passive database
             await loop.run_in_executor(None, _is_free, jpeg, building, cam_num)
+            _last_scanned[(building, cam_num)] = time.monotonic()
             logger.info("Background update complete for %s #%d", building, cam_num)
 
     except Exception:
@@ -245,29 +332,40 @@ async def parking_handler(update: Update, context: Any) -> None:
         return
     status_msg = await update.message.reply_text("Ищу свободное место...")
     loop = asyncio.get_running_loop()
+    t_start = time.monotonic()
 
     try:
-        cameras = await loop.run_in_executor(None, fetch_cameras)
+        t0 = time.monotonic()
+        cameras = await loop.run_in_executor(None, fetch_cameras_cached)
+        logger.info("fetch_cameras: %.0fms", (time.monotonic() - t0) * 1000)
+
         checked = 0
 
-        # Scan buildings in priority order
+        # Scan buildings in priority order, cameras within a building in parallel
         for building, cam_nums in PARKING_CAMERAS:
+            # Resolve all cameras for this building
+            tasks: list[tuple[int, dict[str, Any]]] = []
             for cam_num in cam_nums:
                 cam = find_camera(cameras, building, cam_num)
-                if cam is None:
-                    continue
+                if cam is not None:
+                    tasks.append((cam_num, cam))
 
-                jpeg = await loop.run_in_executor(None, _fetch_jpeg, cam)
-                if jpeg is None:
-                    continue
+            if not tasks:
+                continue
 
-                checked += 1
-                free, detections, free_slots = await loop.run_in_executor(
-                    None, _is_free, jpeg, building, cam_num, True  # readonly=True
-                )
+            # Scan all cameras in this building concurrently
+            results = await asyncio.gather(*[_check_camera(cam, building, cam_num) for cam_num, cam in tasks])
 
-                if free:
-                    logger.info("Free spot found at %s — Камера %02d", building, cam_num)
+            for (cam_num, _cam), (free, jpeg, detections, free_slots) in zip(tasks, results):
+                if jpeg is not None:
+                    checked += 1
+                if free and jpeg is not None:
+                    logger.info(
+                        "Free spot found at %s — Камера %02d (total %.0fms)",
+                        building,
+                        cam_num,
+                        (time.monotonic() - t_start) * 1000,
+                    )
                     photo = _annotate_jpeg(jpeg, detections, free_slots)
                     await status_msg.delete()
                     await update.message.reply_photo(
@@ -276,12 +374,12 @@ async def parking_handler(update: Update, context: Any) -> None:
                     )
                     return
 
+        total_ms = (time.monotonic() - t_start) * 1000
         if checked == 0:
-            logger.warning("No JPEG snapshots were available from any matched camera")
+            logger.warning("No JPEG snapshots were available from any matched camera (%.0fms)", total_ms)
             await status_msg.edit_text("Нет доступных снимков для анализа.")
         else:
-            # Note: During the first ~3 scans per camera, the bot will report nothing
-            # found until it has confirmed its first parking slots.
+            logger.info("No free spots found after checking %d cameras (%.0fms)", checked, total_ms)
             await status_msg.edit_text("Свободных мест не найдено.")
 
     except Exception:

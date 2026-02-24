@@ -1,13 +1,17 @@
+import time
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PIL import Image
 
 from detector import Detection
 from parking import (
     _annotate_jpeg,
+    _check_camera,
     _is_free,
     _norm,
+    fetch_cameras_cached,
     find_camera,
 )
 
@@ -100,3 +104,74 @@ class TestFindCamera:
         result = find_camera([cam1, cam2], "Авиационная 8", 2)
         assert result is not None
         assert result["name"] == "stream2"
+
+
+class TestFetchCamerasCached:
+    @patch("parking.fetch_cameras")
+    def test_cache_miss_calls_fetch(self, mock_fetch):
+        import parking
+
+        # Reset cache state
+        parking._cameras_cache = None
+        parking._cameras_cache_ts = 0.0
+        parking._cameras_index = {}
+
+        mock_fetch.return_value = [{"title": "Test", "name": "cam1"}]
+        result = fetch_cameras_cached()
+        assert result == [{"title": "Test", "name": "cam1"}]
+        mock_fetch.assert_called_once()
+
+    @patch("parking.fetch_cameras")
+    def test_cache_hit_skips_fetch(self, mock_fetch):
+        import parking
+
+        # Pre-populate cache
+        cached = [{"title": "Cached", "name": "cam1"}]
+        parking._cameras_cache = cached
+        parking._cameras_cache_ts = time.monotonic()
+        parking._cameras_index = {}
+
+        result = fetch_cameras_cached()
+        assert result == cached
+        mock_fetch.assert_not_called()
+
+    @patch("parking.fetch_cameras")
+    def test_cache_expired_refetches(self, mock_fetch):
+        import parking
+
+        parking._cameras_cache = [{"title": "Old"}]
+        parking._cameras_cache_ts = time.monotonic() - 600  # 10 min ago
+        parking._cameras_index = {}
+
+        mock_fetch.return_value = [{"title": "New"}]
+        result = fetch_cameras_cached()
+        assert result == [{"title": "New"}]
+        mock_fetch.assert_called_once()
+
+
+class TestCheckCamera:
+    @pytest.mark.asyncio
+    @patch("parking._is_free")
+    @patch("parking._fetch_jpeg")
+    async def test_returns_free_spot(self, mock_fetch_jpeg, mock_is_free):
+        mock_fetch_jpeg.return_value = b"jpeg_bytes"
+        slot = MagicMock()
+        mock_is_free.return_value = (True, [_det(0.1, 0.1, 0.2, 0.2)], [slot])
+
+        cam = {"name": "cam1", "streamer_hostname": "srv", "playback_config": {"token": "t"}}
+        free, jpeg, detections, free_slots = await _check_camera(cam, "Build", 1)
+
+        assert free is True
+        assert jpeg == b"jpeg_bytes"
+        assert len(free_slots) == 1
+
+    @pytest.mark.asyncio
+    @patch("parking._fetch_jpeg")
+    async def test_returns_false_on_no_jpeg(self, mock_fetch_jpeg):
+        mock_fetch_jpeg.return_value = None
+
+        cam = {"name": "cam1", "streamer_hostname": "srv", "playback_config": {"token": "t"}}
+        free, jpeg, detections, free_slots = await _check_camera(cam, "Build", 1)
+
+        assert free is False
+        assert jpeg is None
