@@ -16,3 +16,5 @@ jobs:
       - run: uv sync
       - run: make lint
       - run: make test
+        env:
+          AWS_DEFAULT_REGION: us-east-1

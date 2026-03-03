@@ -24,7 +24,8 @@ def test_update_heatmap_new_slot(mock_get_table):
     mock_get_table.return_value = table
     table.get_item.return_value = {"Item": {"slots": []}}
 
-    dets = [_det(0.1, 0.1, 0.2, 0.2)]
+    # Box must be > MIN_DETECTION_AREA (0.02): 0.15*0.15 = 0.0225
+    dets = [_det(0.1, 0.1, 0.25, 0.25)]
     update_heatmap("Build", 1, dets)
 
     # Verify put_item was called with one slot
@@ -38,12 +39,12 @@ def test_update_heatmap_new_slot(mock_get_table):
 def test_update_heatmap_existing_slot(mock_get_table):
     table = MagicMock()
     mock_get_table.return_value = table
-    # Existing slot at center (0.15, 0.15)
-    existing_slot = {"x1": 0.1, "y1": 0.1, "x2": 0.2, "y2": 0.2, "count": 1, "last_seen": time.time()}
+    # Existing slot at center (0.175, 0.175), area=0.0225
+    existing_slot = {"x1": 0.1, "y1": 0.1, "x2": 0.25, "y2": 0.25, "count": 1, "last_seen": time.time()}
     table.get_item.return_value = {"Item": {"slots": [existing_slot]}}
 
-    # New detection very close to existing slot and with high IoU
-    dets = [_det(0.11, 0.11, 0.21, 0.21)]
+    # Detection close to existing slot (area=0.0225 > MIN_DETECTION_AREA), high IoU
+    dets = [_det(0.11, 0.11, 0.26, 0.26)]
     update_heatmap("Build", 1, dets)
 
     args, kwargs = table.put_item.call_args
@@ -67,8 +68,8 @@ def test_get_confirmed_slots(mock_get_table):
     assert confirmed[0].count == CONFIRMATION_THRESHOLD
 
 
-def test_confirmation_threshold_is_five():
-    assert CONFIRMATION_THRESHOLD == 5
+def test_confirmation_threshold_is_ten():
+    assert CONFIRMATION_THRESHOLD == 10
 
 
 def test_slot_distance():
@@ -109,11 +110,12 @@ def test_alpha_floor_prevents_freezing(mock_get_table):
     table = MagicMock()
     mock_get_table.return_value = table
     # Existing slot seen 1000 times — without floor, alpha would be ~0.001
-    existing_slot = {"x1": 0.1, "y1": 0.1, "x2": 0.2, "y2": 0.2, "count": 1000, "last_seen": time.time()}
+    # Box area=0.0225 > MIN_DETECTION_AREA so the detection passes the size filter
+    existing_slot = {"x1": 0.1, "y1": 0.1, "x2": 0.25, "y2": 0.25, "count": 1000, "last_seen": time.time()}
     table.get_item.return_value = {"Item": {"slots": [existing_slot]}}
 
-    # Slightly shifted detection (close enough to merge, with good IoU)
-    dets = [_det(0.11, 0.11, 0.21, 0.21)]
+    # Slightly shifted detection (close enough to merge, with good IoU, area > MIN_DETECTION_AREA)
+    dets = [_det(0.11, 0.11, 0.26, 0.26)]
     update_heatmap("Build", 1, dets)
 
     args, kwargs = table.put_item.call_args
@@ -138,10 +140,10 @@ def test_iou_gated_merge_rejection(mock_get_table):
 
     args, kwargs = table.put_item.call_args
     slots = kwargs["Item"]["slots"]
-    # Should create a new slot instead of merging
+    # Should create a new slot instead of merging; original slot decays by COUNT_DECAY (5→4)
     assert len(slots) == 2, f"Expected 2 slots (rejected merge), got {len(slots)}"
     counts = sorted([s["count"] for s in slots])
-    assert counts == [1, 5]
+    assert counts == [1, 4]
 
 
 @patch("heatmap._get_table")
