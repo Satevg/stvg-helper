@@ -19,7 +19,7 @@ INPUT_SIZE = 640
 
 _MODEL_PATH = os.environ.get(
     "YOLO_MODEL_PATH",
-    os.path.join(os.path.dirname(__file__), "models", "yolov8n.onnx"),
+    os.path.join(os.path.dirname(__file__), "..", "models", "yolov8n.onnx"),
 )
 
 

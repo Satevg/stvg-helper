@@ -1,8 +1,8 @@
 import time
 from unittest.mock import MagicMock, patch
 
-from detector import Detection
-from heatmap import (
+from parking.detector import Detection
+from parking.heatmap import (
     ALPHA_FLOOR,
     CONFIRMATION_THRESHOLD,
     MERGE_IOU_THRESHOLD,
@@ -18,7 +18,7 @@ def _det(x1, y1, x2, y2):
     return Detection(x1=x1, y1=y1, x2=x2, y2=y2, confidence=0.9, class_id=2)
 
 
-@patch("heatmap._get_table")
+@patch("parking.heatmap._get_table")
 def test_update_heatmap_new_slot(mock_get_table):
     table = MagicMock()
     mock_get_table.return_value = table
@@ -35,7 +35,7 @@ def test_update_heatmap_new_slot(mock_get_table):
     assert slots[0]["count"] == 1
 
 
-@patch("heatmap._get_table")
+@patch("parking.heatmap._get_table")
 def test_update_heatmap_existing_slot(mock_get_table):
     table = MagicMock()
     mock_get_table.return_value = table
@@ -53,7 +53,7 @@ def test_update_heatmap_existing_slot(mock_get_table):
     assert slots[0]["count"] == 2
 
 
-@patch("heatmap._get_table")
+@patch("parking.heatmap._get_table")
 def test_get_confirmed_slots(mock_get_table):
     table = MagicMock()
     mock_get_table.return_value = table
@@ -104,7 +104,7 @@ class TestBoxIou:
         assert s.iou(d) == 1.0
 
 
-@patch("heatmap._get_table")
+@patch("parking.heatmap._get_table")
 def test_alpha_floor_prevents_freezing(mock_get_table):
     """After many observations, alpha should not drop below ALPHA_FLOOR."""
     table = MagicMock()
@@ -125,7 +125,7 @@ def test_alpha_floor_prevents_freezing(mock_get_table):
     assert float(slot["x1"]) > 0.1001, f"Expected drift > 0.1001, got {float(slot['x1'])}"
 
 
-@patch("heatmap._get_table")
+@patch("parking.heatmap._get_table")
 def test_iou_gated_merge_rejection(mock_get_table):
     """Detections with nearby centers but low IoU should NOT merge."""
     table = MagicMock()
@@ -146,7 +146,7 @@ def test_iou_gated_merge_rejection(mock_get_table):
     assert counts == [1, 4]
 
 
-@patch("heatmap._get_table")
+@patch("parking.heatmap._get_table")
 def test_ttl_field_set_on_put(mock_get_table):
     """put_item should include a ttl field for DynamoDB TTL safety net."""
     table = MagicMock()

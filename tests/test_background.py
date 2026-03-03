@@ -16,10 +16,10 @@ def test_lambda_handler_warmup_pings_background_learning():
         assert mock_learning.called
 
 
-@patch("parking.fetch_cameras_cached")
-@patch("parking._fetch_jpeg")
-@patch("parking._is_free")
-@patch("parking.update_heatmap")
+@patch("parking.service.fetch_cameras_cached")
+@patch("parking.service._fetch_jpeg")
+@patch("parking.service._is_free")
+@patch("parking.service.update_heatmap")
 async def test_update_heatmap_background_logic(mock_update, mock_is_free, mock_fetch_jpeg, mock_fetch_cameras):
     from parking import update_heatmap_background
 
@@ -43,9 +43,9 @@ async def test_update_heatmap_background_logic(mock_update, mock_is_free, mock_f
         assert mock_is_free.called
 
 
-@patch("parking.fetch_cameras_cached")
-@patch("parking._fetch_jpeg")
-@patch("parking._is_free")
+@patch("parking.service.fetch_cameras_cached")
+@patch("parking.service._fetch_jpeg")
+@patch("parking.service._is_free")
 async def test_background_selects_4_cameras(mock_is_free, mock_fetch_jpeg, mock_fetch_cameras):
     """Background learning should attempt to scan up to 4 cameras per invocation."""
     from parking import update_heatmap_background
@@ -88,9 +88,9 @@ async def test_background_selects_4_cameras(mock_is_free, mock_fetch_jpeg, mock_
         assert mock_is_free.call_count == 4
 
 
-@patch("parking.fetch_cameras_cached")
-@patch("parking._fetch_jpeg")
-@patch("parking._is_free")
+@patch("parking.service.fetch_cameras_cached")
+@patch("parking.service._fetch_jpeg")
+@patch("parking.service._is_free")
 async def test_staleness_weighted_selection(mock_is_free, mock_fetch_jpeg, mock_fetch_cameras):
     """Staleness-weighted selection should call random.choices with weights."""
     from parking import update_heatmap_background

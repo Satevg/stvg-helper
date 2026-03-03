@@ -11,9 +11,9 @@ import requests
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.parameters import SSMProvider
-from detector import Detection, detect_vehicles
-from heatmap import OCCUPIED_IOU_THRESHOLD, get_confirmed_slots, update_heatmap
 from metrics import metrics
+from parking.detector import Detection, detect_vehicles
+from parking.heatmap import OCCUPIED_IOU_THRESHOLD, get_confirmed_slots, update_heatmap
 from PIL import Image, ImageDraw
 from telegram import Update
 

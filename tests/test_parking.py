@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from detector import Detection
-from parking import (
+from parking.detector import Detection
+from parking.service import (
     _annotate_jpeg,
     _check_camera,
     _is_free,
@@ -26,11 +26,11 @@ def _det(x1: float, y1: float, x2: float, y2: float) -> Detection:
     return Detection(x1=x1, y1=y1, x2=x2, y2=y2, confidence=0.9, class_id=2)
 
 
-@patch("parking.update_heatmap")
+@patch("parking.service.update_heatmap")
 class TestIsFree:
     def test_no_slots_is_not_free(self, mock_update):
-        with patch("parking.get_confirmed_slots", return_value=[]):
-            with patch("parking.detect_vehicles", return_value=(0.0, [])):
+        with patch("parking.service.get_confirmed_slots", return_value=[]):
+            with patch("parking.service.detect_vehicles", return_value=(0.0, [])):
                 free, detections, slots = _is_free(b"img", "Build", 1)
         assert free is False
         assert slots == []
@@ -40,8 +40,8 @@ class TestIsFree:
         slot = MagicMock(x1=0, y1=0, x2=100, y2=100)
         slot.iou.return_value = 0.5  # significant overlap → occupied
         dets = [_det(10, 10, 50, 50)]
-        with patch("parking.get_confirmed_slots", return_value=[slot]):
-            with patch("parking.detect_vehicles", return_value=(0.1, dets)):
+        with patch("parking.service.get_confirmed_slots", return_value=[slot]):
+            with patch("parking.service.detect_vehicles", return_value=(0.1, dets)):
                 free, detections, slots = _is_free(b"img", "Build", 1)
         assert free is False
         assert slots == []
@@ -50,8 +50,8 @@ class TestIsFree:
         slot = MagicMock(x1=200, y1=200, x2=300, y2=300)
         slot.iou.return_value = 0.0  # no overlap → free
         dets = [_det(0, 0, 100, 100)]
-        with patch("parking.get_confirmed_slots", return_value=[slot]):
-            with patch("parking.detect_vehicles", return_value=(0.1, dets)):
+        with patch("parking.service.get_confirmed_slots", return_value=[slot]):
+            with patch("parking.service.detect_vehicles", return_value=(0.1, dets)):
                 free, detections, slots = _is_free(b"img", "Build", 1)
         assert free is True
         assert slots == [slot]
@@ -109,41 +109,41 @@ class TestFindCamera:
 
 
 class TestFetchCamerasCached:
-    @patch("parking.fetch_cameras")
+    @patch("parking.service.fetch_cameras")
     def test_cache_miss_calls_fetch(self, mock_fetch):
-        import parking
+        import parking.service
 
         # Reset cache state
-        parking._cameras_cache = None
-        parking._cameras_cache_ts = 0.0
-        parking._cameras_index = {}
+        parking.service._cameras_cache = None
+        parking.service._cameras_cache_ts = 0.0
+        parking.service._cameras_index = {}
 
         mock_fetch.return_value = [{"title": "Test", "name": "cam1"}]
         result = fetch_cameras_cached()
         assert result == [{"title": "Test", "name": "cam1"}]
         mock_fetch.assert_called_once()
 
-    @patch("parking.fetch_cameras")
+    @patch("parking.service.fetch_cameras")
     def test_cache_hit_skips_fetch(self, mock_fetch):
-        import parking
+        import parking.service
 
         # Pre-populate cache
         cached = [{"title": "Cached", "name": "cam1"}]
-        parking._cameras_cache = cached
-        parking._cameras_cache_ts = time.monotonic()
-        parking._cameras_index = {}
+        parking.service._cameras_cache = cached
+        parking.service._cameras_cache_ts = time.monotonic()
+        parking.service._cameras_index = {}
 
         result = fetch_cameras_cached()
         assert result == cached
         mock_fetch.assert_not_called()
 
-    @patch("parking.fetch_cameras")
+    @patch("parking.service.fetch_cameras")
     def test_cache_expired_refetches(self, mock_fetch):
-        import parking
+        import parking.service
 
-        parking._cameras_cache = [{"title": "Old"}]
-        parking._cameras_cache_ts = time.monotonic() - 600  # 10 min ago
-        parking._cameras_index = {}
+        parking.service._cameras_cache = [{"title": "Old"}]
+        parking.service._cameras_cache_ts = time.monotonic() - 600  # 10 min ago
+        parking.service._cameras_index = {}
 
         mock_fetch.return_value = [{"title": "New"}]
         result = fetch_cameras_cached()
@@ -153,8 +153,8 @@ class TestFetchCamerasCached:
 
 class TestCheckCamera:
     @pytest.mark.asyncio
-    @patch("parking._is_free")
-    @patch("parking._fetch_jpeg")
+    @patch("parking.service._is_free")
+    @patch("parking.service._fetch_jpeg")
     async def test_returns_free_spot(self, mock_fetch_jpeg, mock_is_free):
         mock_fetch_jpeg.return_value = b"jpeg_bytes"
         slot = MagicMock()
@@ -168,7 +168,7 @@ class TestCheckCamera:
         assert len(free_slots) == 1
 
     @pytest.mark.asyncio
-    @patch("parking._fetch_jpeg")
+    @patch("parking.service._fetch_jpeg")
     async def test_returns_false_on_no_jpeg(self, mock_fetch_jpeg):
         mock_fetch_jpeg.return_value = None
 

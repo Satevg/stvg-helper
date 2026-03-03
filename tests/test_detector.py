@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from detector import (
+from parking.detector import (
     CONFIDENCE_THRESHOLD,
     INPUT_SIZE,
     VEHICLE_CLASSES,
@@ -198,7 +198,7 @@ class TestDetectVehicles:
 
     def test_no_vehicles_coverage_zero(self):
         output = _make_yolo_output([], class_id=2, confidence=0.0)
-        with patch("detector._get_session", return_value=self._mock_session(output)):
+        with patch("parking.detector._get_session", return_value=self._mock_session(output)):
             coverage, dets = detect_vehicles(_make_jpeg())
         assert coverage == 0.0
         assert dets == []
@@ -208,7 +208,7 @@ class TestDetectVehicles:
         # scale_y=480/640=0.75 → box height in orig = 480*0.75=360, width=640.
         # coverage = (640*360)/(640*480) = 0.75
         output = _make_yolo_output([(320, 240, 640, 480)], class_id=2, confidence=0.90)
-        with patch("detector._get_session", return_value=self._mock_session(output)):
+        with patch("parking.detector._get_session", return_value=self._mock_session(output)):
             coverage, dets = detect_vehicles(_make_jpeg(640, 480))
         assert coverage == pytest.approx(0.75, abs=0.05)
         assert len(dets) == 1
@@ -217,14 +217,14 @@ class TestDetectVehicles:
         # Multiple large overlapping boxes should not exceed 1.0
         boxes = [(320, 240, 640, 480)] * 5
         output = _make_yolo_output(boxes, class_id=2, confidence=0.90)
-        with patch("detector._get_session", return_value=self._mock_session(output)):
+        with patch("parking.detector._get_session", return_value=self._mock_session(output)):
             coverage, _ = detect_vehicles(_make_jpeg(640, 480))
         assert coverage <= 1.0
 
     def test_small_vehicle_low_coverage(self):
         # 64x48 box on 640x480 image → coverage ≈ (64*48)/(640*480) ≈ 0.01
         output = _make_yolo_output([(320, 240, 64, 48)], class_id=2, confidence=0.90)
-        with patch("detector._get_session", return_value=self._mock_session(output)):
+        with patch("parking.detector._get_session", return_value=self._mock_session(output)):
             coverage, dets = detect_vehicles(_make_jpeg(640, 480))
         assert coverage == pytest.approx(3072 / 307200, abs=0.01)
         assert len(dets) == 1

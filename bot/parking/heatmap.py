@@ -7,8 +7,8 @@ from typing import Any
 import boto3
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.metrics import MetricUnit
-from detector import Detection
 from metrics import metrics
+from parking.detector import Detection
 
 logger = Logger(child=True)
 
