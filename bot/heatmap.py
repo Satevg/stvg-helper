@@ -29,6 +29,10 @@ ALPHA_FLOOR = 0.02
 # Prevents merging differently-sized vehicles that happen to have nearby centers.
 MERGE_IOU_THRESHOLD = 0.3
 
+# Minimum IoU overlap required to consider a confirmed slot as currently occupied.
+# Filters out vehicles driving past that only clip the edge of a slot's bounding box.
+OCCUPIED_IOU_THRESHOLD = 0.2
+
 
 @dataclass
 class Slot:

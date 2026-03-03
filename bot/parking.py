@@ -11,7 +11,7 @@ import requests
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.utilities.parameters import SSMProvider
 from detector import Detection, detect_vehicles
-from heatmap import get_confirmed_slots, update_heatmap
+from heatmap import OCCUPIED_IOU_THRESHOLD, get_confirmed_slots, update_heatmap
 from PIL import Image, ImageDraw
 from telegram import Update
 
@@ -224,7 +224,7 @@ def _is_free(
     # A spot is free if a confirmed slot has NO vehicle detection box overlapping it
     free_slots = []
     for s in slots:
-        occupied = any(d.x1 < s.x2 and d.x2 > s.x1 and d.y1 < s.y2 and d.y2 > s.y1 for d in detections)
+        occupied = any(s.iou(d) >= OCCUPIED_IOU_THRESHOLD for d in detections)
         if not occupied:
             free_slots.append(s)
 

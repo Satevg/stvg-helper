@@ -38,6 +38,7 @@ class TestIsFree:
 
     def test_occupied_slot_is_not_free(self, mock_update):
         slot = MagicMock(x1=0, y1=0, x2=100, y2=100)
+        slot.iou.return_value = 0.5  # significant overlap → occupied
         dets = [_det(10, 10, 50, 50)]
         with patch("parking.get_confirmed_slots", return_value=[slot]):
             with patch("parking.detect_vehicles", return_value=(0.1, dets)):
@@ -47,6 +48,7 @@ class TestIsFree:
 
     def test_unoccupied_slot_is_free(self, mock_update):
         slot = MagicMock(x1=200, y1=200, x2=300, y2=300)
+        slot.iou.return_value = 0.0  # no overlap → free
         dets = [_det(0, 0, 100, 100)]
         with patch("parking.get_confirmed_slots", return_value=[slot]):
             with patch("parking.detect_vehicles", return_value=(0.1, dets)):
