@@ -9,9 +9,11 @@ from typing import Any
 import av
 import requests
 from aws_lambda_powertools import Logger
+from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.parameters import SSMProvider
 from detector import Detection, detect_vehicles
 from heatmap import OCCUPIED_IOU_THRESHOLD, get_confirmed_slots, update_heatmap
+from metrics import metrics
 from PIL import Image, ImageDraw
 from telegram import Update
 
@@ -255,6 +257,8 @@ async def _check_camera(
         t_check * 1000,
         free,
     )
+    metrics.add_metric(name="VehiclesDetected", unit=MetricUnit.Count, value=len(detections))
+    metrics.add_metric(name="DetectionDurationMs", unit=MetricUnit.Milliseconds, value=t_check * 1000)
     return free, jpeg, detections, free_slots
 
 
@@ -322,7 +326,11 @@ async def update_heatmap_background() -> None:
                 continue
 
             # This call updates the heatmap passive database
-            await loop.run_in_executor(None, _is_free, jpeg, building, cam_num)
+            t1 = time.monotonic()
+            _, detections, _ = await loop.run_in_executor(None, _is_free, jpeg, building, cam_num)
+            t_detect = time.monotonic() - t1
+            metrics.add_metric(name="VehiclesDetected", unit=MetricUnit.Count, value=len(detections))
+            metrics.add_metric(name="DetectionDurationMs", unit=MetricUnit.Milliseconds, value=t_detect * 1000)
             _last_scanned[(building, cam_num)] = time.monotonic()
             logger.info("Background update complete for %s #%d", building, cam_num)
 
@@ -344,6 +352,7 @@ async def parking_handler(update: Update, context: Any) -> None:
         logger.info("fetch_cameras: %.0fms", (time.monotonic() - t0) * 1000)
 
         checked = 0
+        total_free_slots = 0
 
         # Scan buildings in priority order, cameras within a building in parallel
         for building, cam_nums in PARKING_CAMERAS:
@@ -363,6 +372,7 @@ async def parking_handler(update: Update, context: Any) -> None:
             for (cam_num, _cam), (free, jpeg, detections, free_slots) in zip(tasks, results):
                 if jpeg is not None:
                     checked += 1
+                total_free_slots += len(free_slots)
                 if free and jpeg is not None:
                     logger.info(
                         "Free spot found at %s — Камера %02d (total %.0fms)",
@@ -371,6 +381,10 @@ async def parking_handler(update: Update, context: Any) -> None:
                         (time.monotonic() - t_start) * 1000,
                     )
                     photo = _annotate_jpeg(jpeg, detections, free_slots)
+                    total_ms = (time.monotonic() - t_start) * 1000
+                    metrics.add_metric(name="ParkingSearchDurationMs", unit=MetricUnit.Milliseconds, value=total_ms)
+                    metrics.add_metric(name="CamerasChecked", unit=MetricUnit.Count, value=checked)
+                    metrics.add_metric(name="FreeSlotsFound", unit=MetricUnit.Count, value=total_free_slots)
                     await status_msg.delete()
                     await update.message.reply_photo(
                         photo=BytesIO(photo),
@@ -379,6 +393,9 @@ async def parking_handler(update: Update, context: Any) -> None:
                     return
 
         total_ms = (time.monotonic() - t_start) * 1000
+        metrics.add_metric(name="ParkingSearchDurationMs", unit=MetricUnit.Milliseconds, value=total_ms)
+        metrics.add_metric(name="CamerasChecked", unit=MetricUnit.Count, value=checked)
+        metrics.add_metric(name="FreeSlotsFound", unit=MetricUnit.Count, value=total_free_slots)
         if checked == 0:
             logger.warning("No JPEG snapshots were available from any matched camera (%.0fms)", total_ms)
             await status_msg.edit_text("Нет доступных снимков для анализа.")

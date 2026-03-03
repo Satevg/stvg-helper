@@ -6,7 +6,9 @@ from typing import Any
 
 import boto3
 from aws_lambda_powertools import Logger
+from aws_lambda_powertools.metrics import MetricUnit
 from detector import Detection
+from metrics import metrics
 
 logger = Logger(child=True)
 
@@ -19,7 +21,7 @@ PROXIMITY_THRESHOLD = 0.05
 
 # Minimum number of times a vehicle must be seen in a spot to "confirm" it as a real slot.
 # This filters out temporary stops, moving cars, or transient delivery vehicles.
-CONFIRMATION_THRESHOLD = 5
+CONFIRMATION_THRESHOLD = 10
 
 # Floor for the moving average alpha — new data always has at least this much influence.
 # Prevents slots from "freezing" after many observations.
@@ -32,6 +34,18 @@ MERGE_IOU_THRESHOLD = 0.3
 # Minimum IoU overlap required to consider a confirmed slot as currently occupied.
 # Filters out vehicles driving past that only clip the edge of a slot's bounding box.
 OCCUPIED_IOU_THRESHOLD = 0.2
+
+# Minimum bounding box area (normalized) to be considered a valid parking detection.
+# Filters out tiny far-away vehicles (e.g. cars across the street). 0.002 = 0.2% of frame area.
+MIN_DETECTION_AREA = 0.02
+
+# Maximum count a slot can reach. Prevents unbounded growth and keeps the moving
+# average responsive. At COUNT_CAP the alpha floor still applies.
+COUNT_CAP = 30
+
+# How much to decrease a slot's count each scan where it had no matching detection.
+# A confirmed slot (count=5) missed ~25 times in a row drops back to 0 and gets pruned.
+COUNT_DECAY = 1
 
 
 @dataclass
@@ -136,25 +150,39 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
             )
 
         # 2. Iterate through current vehicle detections and update clusters
+        matched_slots: set[int] = set()
         for d in detections:
+            # Skip tiny far-away detections (cars across the street, etc.)
+            if (d.x2 - d.x1) * (d.y2 - d.y1) < MIN_DETECTION_AREA:
+                continue
+
             best_slot = None
+            best_idx = -1
             min_dist = float("inf")
-            for s in slots:
+            for idx, s in enumerate(slots):
                 dist = s.distance_to(d)
                 if dist < min_dist:
                     min_dist = dist
                     best_slot = s
+                    best_idx = idx
 
-            if best_slot and min_dist < PROXIMITY_THRESHOLD and best_slot.iou(d) >= MERGE_IOU_THRESHOLD:
+            if best_slot is not None and min_dist < PROXIMITY_THRESHOLD and best_slot.iou(d) >= MERGE_IOU_THRESHOLD:
                 alpha = max(1.0 / (best_slot.count + 1), ALPHA_FLOOR)
                 best_slot.x1 = (1 - alpha) * best_slot.x1 + alpha * d.x1
                 best_slot.y1 = (1 - alpha) * best_slot.y1 + alpha * d.y1
                 best_slot.x2 = (1 - alpha) * best_slot.x2 + alpha * d.x2
                 best_slot.y2 = (1 - alpha) * best_slot.y2 + alpha * d.y2
-                best_slot.count += 1
+                best_slot.count = min(best_slot.count + 1, COUNT_CAP)
                 best_slot.last_seen = now
+                matched_slots.add(best_idx)
             else:
+                matched_slots.add(len(slots))
                 slots.append(Slot(x1=d.x1, y1=d.y1, x2=d.x2, y2=d.y2, count=1, last_seen=now))
+
+        # Decay slots that had no matching detection this scan
+        for idx, s in enumerate(slots):
+            if idx not in matched_slots:
+                s.count = max(0, s.count - COUNT_DECAY)
 
         # 3. SELF-CLEANING: Merge clusters that are too close to each other
         # This prevents "cluster explosion" if detections are jittery.
@@ -174,9 +202,9 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
 
         slots = pruned_slots
 
-        # 4. Garbage Collection: Remove slots not seen for 7 days
+        # 4. Garbage Collection: Remove fully-decayed slots and slots not seen for 7 days
         week_ago = now - (7 * 24 * 3600)
-        slots = [s for s in slots if s.last_seen > week_ago]
+        slots = [s for s in slots if s.count > 0 and s.last_seen > week_ago]
 
         # 5. HARD CAP: Keep only the top 50 most frequent clusters
         # (No camera in this list has 50+ parking spots)
@@ -198,6 +226,8 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
 
         ttl = int(now) + 14 * 86400  # Safety net: auto-expire if not updated for 14 days
         table.put_item(Item={"PK": pk, "SK": sk, "slots": decimal_slots, "updated_at": int(now), "ttl": ttl})
+        confirmed_count = sum(1 for s in slots if s.count >= CONFIRMATION_THRESHOLD)
+        metrics.add_metric(name="HeatmapSlotCount", unit=MetricUnit.Count, value=confirmed_count)
         logger.info("Updated heatmap for %s #%d: %d clusters", building, cam_num, len(slots))
 
     except Exception:

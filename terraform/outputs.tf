@@ -22,3 +22,13 @@ output "ecr_repository_url" {
   description = "ECR repository URL"
   value       = aws_ecr_repository.bot.repository_url
 }
+
+output "grafana_access_key_id_ssm" {
+  description = "SSM parameter name for Grafana IAM access key ID"
+  value       = aws_ssm_parameter.grafana_access_key_id.name
+}
+
+output "grafana_secret_access_key_ssm" {
+  description = "SSM parameter name for Grafana IAM secret access key"
+  value       = aws_ssm_parameter.grafana_secret_access_key.name
+}
