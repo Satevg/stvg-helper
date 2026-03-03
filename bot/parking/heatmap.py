@@ -6,8 +6,6 @@ from typing import Any
 
 import boto3
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.metrics import MetricUnit
-from metrics import metrics
 from parking.detector import Detection
 
 logger = Logger(child=True)
@@ -227,8 +225,6 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
 
         ttl = int(now) + 14 * 86400  # Safety net: auto-expire if not updated for 14 days
         table.put_item(Item={"PK": pk, "SK": sk, "slots": decimal_slots, "updated_at": int(now), "ttl": ttl})
-        confirmed_count = sum(1 for s in slots if s.count >= CONFIRMATION_THRESHOLD)
-        metrics.add_metric(name="HeatmapSlotCount", unit=MetricUnit.Count, value=confirmed_count)
         logger.info("Updated heatmap for %s #%d: %d clusters", building, cam_num, len(slots))
 
     except Exception:

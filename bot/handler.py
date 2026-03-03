@@ -5,7 +5,6 @@ from typing import Any, TypeAlias
 
 import anthropic
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.parameters import SSMProvider
 from metrics import metrics
 from parking import parking_handler, update_heatmap_background
@@ -114,7 +113,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             asyncio.set_event_loop(_loop)
 
         _loop.run_until_complete(update_heatmap_background())
-        metrics.add_metric(name="BackgroundScansCompleted", unit=MetricUnit.Count, value=1)
         return {"statusCode": 200, "body": json.dumps({"ok": True})}
 
     if not event.get("body"):
