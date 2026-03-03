@@ -26,14 +26,18 @@ WATCHER_URL = os.environ.get("WATCHER_URL", "https://video.unet.by")
 
 # (building title prefix, camera numbers) in search priority order.
 # The bot will stop at the first camera that reports a free parking spot.
+# PARKING_CAMERAS: list[tuple[str, list[int]]] = [
+#     ("Авиационная 8", [1, 2, 3, 4, 7, 12]),
+#     ("Авиационная 10", [1, 3, 4, 6, 8, 9, 10, 11]),
+#     ("Б.Райт 1", [2, 3, 10]),
+#     ("Б.Райт 3", [1, 2, 3]),
+#     ("Б.Райт 5", [2, 5, 8]),
+#     ("Б.Райт 7", [3, 4, 7, 8, 9]),
+#     ("Яковлева 1", [2, 4, 7]),
+# ]
 PARKING_CAMERAS: list[tuple[str, list[int]]] = [
-    ("Авиационная 8", [1, 2, 3, 4, 7, 12]),
-    ("Авиационная 10", [1, 3, 4, 6, 8, 9, 10, 11]),
-    ("Б.Райт 1", [2, 3, 10]),
-    ("Б.Райт 3", [1, 2, 3]),
-    ("Б.Райт 5", [2, 5, 8]),
-    ("Б.Райт 7", [3, 4, 7, 8, 9]),
-    ("Яковлева 1", [2, 4, 7]),
+    ("Авиационная 8", [1, 2, 3, 4]),
+    ("Авиационная 10", [3, 4, 10, 11]),
 ]
 
 
