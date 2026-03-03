@@ -215,13 +215,13 @@ def _is_free(
     if not readonly:
         update_heatmap(building, cam_num, detections)
 
-    # Active detection: Use confirmed (seen 3+ times) hotspots to check for emptiness
+    # Active detection: Use confirmed (seen 5+ times) hotspots to check for emptiness
     slots = get_confirmed_slots(building, cam_num)
     if not slots:
         # No confirmed slots yet (bot is still learning this camera)
         return False, detections, []
 
-    # A spot is free if a confirmed slot has NO vehicle detection box overlapping it
+    # A spot is free if no current detection overlaps a confirmed slot with IoU >= OCCUPIED_IOU_THRESHOLD
     free_slots = []
     for s in slots:
         occupied = any(s.iou(d) >= OCCUPIED_IOU_THRESHOLD for d in detections)
