@@ -36,7 +36,7 @@ MERGE_IOU_THRESHOLD = 0.3
 OCCUPIED_IOU_THRESHOLD = 0.2
 
 # Minimum bounding box area (normalized) to be considered a valid parking detection.
-# Filters out tiny far-away vehicles (e.g. cars across the street). 0.002 = 0.2% of frame area.
+# Filters out tiny far-away vehicles (e.g. cars across the street). 0.02 = 2% of frame area.
 MIN_DETECTION_AREA = 0.02
 
 # Maximum count a slot can reach. Prevents unbounded growth and keeps the moving
@@ -179,9 +179,10 @@ def update_heatmap(building: str, cam_num: int, detections: list[Detection]) -> 
                 matched_slots.add(len(slots))
                 slots.append(Slot(x1=d.x1, y1=d.y1, x2=d.x2, y2=d.y2, count=1, last_seen=now))
 
-        # Decay slots that had no matching detection this scan
+        # Decay unconfirmed slots that had no matching detection this scan.
+        # Confirmed slots are preserved — absence of a vehicle just means the spot is free.
         for idx, s in enumerate(slots):
-            if idx not in matched_slots:
+            if idx not in matched_slots and s.count < CONFIRMATION_THRESHOLD:
                 s.count = max(0, s.count - COUNT_DECAY)
 
         # 3. SELF-CLEANING: Merge clusters that are too close to each other

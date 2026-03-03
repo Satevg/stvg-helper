@@ -328,9 +328,10 @@ async def update_heatmap_background() -> None:
             # This call updates the heatmap passive database
             t1 = time.monotonic()
             _, detections, _ = await loop.run_in_executor(None, _is_free, jpeg, building, cam_num)
-            t_detect = time.monotonic() - t1
+            t_scan = time.monotonic() - t1
             metrics.add_metric(name="VehiclesDetected", unit=MetricUnit.Count, value=len(detections))
-            metrics.add_metric(name="DetectionDurationMs", unit=MetricUnit.Milliseconds, value=t_detect * 1000)
+            # ScanDurationMs includes detection + DynamoDB read/write (unlike the manual path)
+            metrics.add_metric(name="ScanDurationMs", unit=MetricUnit.Milliseconds, value=t_scan * 1000)
             _last_scanned[(building, cam_num)] = time.monotonic()
             logger.info("Background update complete for %s #%d", building, cam_num)
 
