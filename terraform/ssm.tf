@@ -1,8 +1,15 @@
+locals {
+  ssm_tags = {
+    app = "stvg-helper-bot"
+  }
+}
+
 resource "aws_ssm_parameter" "bot_token" {
   name        = "/stvg-helper/telegram-bot-token"
   description = "Telegram bot API token"
   type        = "SecureString"
   value       = "PLACEHOLDER"
+  tags        = local.ssm_tags
 
   lifecycle {
     ignore_changes = [value]
@@ -14,6 +21,7 @@ resource "aws_ssm_parameter" "anthropic_api_key" {
   description = "Anthropic API key"
   type        = "SecureString"
   value       = "PLACEHOLDER"
+  tags        = local.ssm_tags
 
   lifecycle {
     ignore_changes = [value]
@@ -25,6 +33,7 @@ resource "aws_ssm_parameter" "watcher_username" {
   description = "Flussonic Watcher username"
   type        = "SecureString"
   value       = "PLACEHOLDER"
+  tags        = local.ssm_tags
 
   lifecycle {
     ignore_changes = [value]
@@ -36,6 +45,7 @@ resource "aws_ssm_parameter" "watcher_password" {
   description = "Flussonic Watcher password"
   type        = "SecureString"
   value       = "PLACEHOLDER"
+  tags        = local.ssm_tags
 
   lifecycle {
     ignore_changes = [value]

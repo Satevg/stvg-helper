@@ -40,6 +40,7 @@ WATCHER_URL = os.environ.get("WATCHER_URL", "https://video.unet.by")
 PARKING_CAMERAS: list[tuple[str, list[int]]] = [
     ("Авиационная 8", [1, 2, 3, 4]),
     ("Авиационная 10", [3, 4, 10, 11]),
+    ("Б.Райт 1", [2, 3, 10]),
 ]
 
 

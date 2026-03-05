@@ -1,7 +1,7 @@
 resource "aws_cloudwatch_event_rule" "warmup" {
   name                = "${local.function_name}-warmup"
   description         = "Keeps the Lambda warm by pinging every 5 minutes"
-  schedule_expression = "rate(3 minutes)"
+  schedule_expression = "rate(5 minutes)"
 }
 
 resource "aws_cloudwatch_event_target" "warmup" {
