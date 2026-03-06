@@ -4,7 +4,7 @@ Personal Telegram bot hosted on AWS Lambda.
 
 ## Tech Stack
 
--   **Bot**: Python 3.12, python-telegram-bot v21.10, Anthropic SDK, requests
+-   **Bot**: Python 3.12, python-telegram-bot v21.10, Anthropic SDK, requests; managed via `uv`
 -   **AI**: Free-form messages forwarded to Claude (`claude-haiku-4-5-20251001`)
 -   **Vehicle detection**: YOLOv8n ONNX (local inference) via `onnxruntime` + `numpy`
 -   **Data Store**: DynamoDB (Heatmap state, confirmed slots)
@@ -13,9 +13,10 @@ Personal Telegram bot hosted on AWS Lambda.
 ## Project Structure
 
 -   `bot/handler.py` — Lambda entrypoint, EventBridge routing, Claude integration
--   `bot/parking.py` — Flussonic Watcher integration and parking logic
--   `bot/heatmap.py` — Autonomous learning engine (clustering/DynamoDB)
--   `bot/detector.py` — YOLOv8n ONNX vehicle detection module
+-   `bot/metrics.py` — Metrics/telemetry helpers
+-   `bot/parking/service.py` — Flussonic Watcher integration and parking logic
+-   `bot/parking/heatmap.py` — Autonomous learning engine (clustering/DynamoDB)
+-   `bot/parking/detector.py` — YOLOv8n ONNX vehicle detection module
 -   `models/yolov8n.onnx` — Pre-trained YOLOv8n model
 -   `terraform/` — Infrastructure as code
 
@@ -39,8 +40,9 @@ EventBridge triggers the Lambda every 5 minutes. The bot picks **2 random camera
 ## Development Standards
 
 - **Formatting**: Black (120 chars), Isort (Black profile). Run `make black-fix` / `make isort-fix`.
-- **Typing**: Strict Mypy. All new functions must have type hints.
-- **Testing**: Pytest. Use `tests/test_background.py` and `tests/test_heatmap.py` for verifying learning logic.
+- **Typing**: Strict Mypy. All new functions must have type hints. Run `make mypy`.
+- **Testing**: Pytest. Run `make test`. Test files: `tests/test_background.py`, `tests/test_heatmap.py`, `tests/test_detector.py`, `tests/test_parking.py`.
+- **Lint all**: `make lint` runs black + isort + mypy checks together.
 - **Infrastructure**: All AWS resources must fit within the Free Tier.
 - **Secrets**: Use SSM Parameter Store. Never hardcode tokens or credentials.
 
