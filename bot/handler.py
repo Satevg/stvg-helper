@@ -10,6 +10,7 @@ from metrics import metrics
 from parking import parking_handler, update_heatmap_background
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from xvideo import TWITTER_URL_RE, xvideo_handler
 
 logger = Logger()
 
@@ -40,6 +41,7 @@ def build_application() -> AnyApplication:
     application = Application.builder().token(token).updater(None).build()
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(MessageHandler(filters.Text(["Hello", "Parking"]), menu_button_handler))
+    application.add_handler(MessageHandler(filters.Regex(TWITTER_URL_RE), xvideo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, claude_handler))
     return application
 
