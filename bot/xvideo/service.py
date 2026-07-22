@@ -26,6 +26,8 @@ VXTWITTER_API = "https://api.vxtwitter.com/Twitter/status/{id}"
 TELEGRAM_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 _HTTP_TIMEOUT = 15
+# Uploading the downloaded video to Telegram needs a longer transfer window.
+_UPLOAD_TIMEOUT = 120
 
 
 def extract_tweet_id(text: str) -> str | None:
@@ -112,7 +114,14 @@ async def xvideo_handler(update: Update, context: Any) -> None:
             await update.message.reply_text(f"Video is too large to upload. Direct link:\n{video_url}")
             return
 
-        await update.message.reply_video(video=data)
+        # Uploading the video body can take a while; the PTB default write timeout (5s)
+        # is too short for multi-MB files, so bump the transfer timeouts generously.
+        await update.message.reply_video(
+            video=data,
+            read_timeout=_UPLOAD_TIMEOUT,
+            write_timeout=_UPLOAD_TIMEOUT,
+            connect_timeout=_HTTP_TIMEOUT,
+        )
         metrics.add_metric(name="XVideoSuccess", unit=MetricUnit.Count, value=1)
     except Exception:
         logger.exception("Failed to handle X/Twitter video for tweet %s", tweet_id)
