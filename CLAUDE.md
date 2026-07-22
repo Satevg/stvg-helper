@@ -26,13 +26,13 @@ Personal Telegram bot hosted on AWS Lambda.
 ### Autonomous Parking (Heatmap)
 The system learns parking spots through passive observation:
 1. **Clustering**: Detections are merged into clusters based on Euclidean distance (`PROXIMITY_THRESHOLD = 0.05`).
-2. **Confirmation**: A slot is only trusted after being seen `CONFIRMATION_THRESHOLD = 3` times.
+2. **Confirmation**: A slot is only trusted after being seen `CONFIRMATION_THRESHOLD = 10` times.
 3. **Detection**: A spot is "FREE" if a confirmed slot has no current vehicle overlap.
 4. **Drift**: Slot coordinates move toward new detections via a moving average, refining accuracy over time.
 5. **Garbage Collection**: Slots not seen for 7 days are pruned from DynamoDB.
 
 ### Automated Learning (EventBridge)
-EventBridge triggers the Lambda every 5 minutes. The bot picks **2 random cameras** per ping to scan and update the heatmap. This ensures the entire network of ~45 cameras is updated ~12 times a day automatically while staying within the AWS Free Tier.
+EventBridge triggers the Lambda every 5 minutes. The bot picks **4 cameras** per ping (staleness-weighted selection) to scan and update the heatmap. This keeps the camera network updated automatically while staying within the AWS Free Tier.
 
 ### Event Loop Management
 - **Singletons**: `_loop` and `_application` are kept alive across warm Lambda invocations. 
@@ -42,7 +42,7 @@ EventBridge triggers the Lambda every 5 minutes. The bot picks **2 random camera
 
 - **Formatting**: Black (120 chars), Isort (Black profile). Run `make black-fix` / `make isort-fix`.
 - **Typing**: Strict Mypy. All new functions must have type hints. Run `make mypy`.
-- **Testing**: Pytest. Run `make test`. Test files: `tests/test_background.py`, `tests/test_heatmap.py`, `tests/test_detector.py`, `tests/test_parking.py`, `tests/test_xvideo.py`.
+- **Testing**: Pytest. Run `make test` (requires `AWS_DEFAULT_REGION` set — e.g. `AWS_DEFAULT_REGION=us-east-1 make test` — since tests exercise boto3/DynamoDB paths). Test files: `tests/test_background.py`, `tests/test_heatmap.py`, `tests/test_detector.py`, `tests/test_parking.py`, `tests/test_xvideo.py`.
 - **Lint all**: `make lint` runs black + isort + mypy checks together.
 - **Infrastructure**: All AWS resources must fit within the Free Tier.
 - **Secrets**: Use SSM Parameter Store. Never hardcode tokens or credentials.
