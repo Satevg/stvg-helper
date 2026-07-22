@@ -17,6 +17,7 @@ Personal Telegram bot hosted on AWS Lambda.
 -   `bot/parking/service.py` — Flussonic Watcher integration and parking logic
 -   `bot/parking/heatmap.py` — Autonomous learning engine (clustering/DynamoDB)
 -   `bot/parking/detector.py` — YOLOv8n ONNX vehicle detection module
+-   `bot/xvideo/service.py` — X/Twitter link → video download (fxtwitter/vxtwitter API)
 -   `models/yolov8n.onnx` — Pre-trained YOLOv8n model
 -   `terraform/` — Infrastructure as code
 
@@ -41,7 +42,7 @@ EventBridge triggers the Lambda every 5 minutes. The bot picks **2 random camera
 
 - **Formatting**: Black (120 chars), Isort (Black profile). Run `make black-fix` / `make isort-fix`.
 - **Typing**: Strict Mypy. All new functions must have type hints. Run `make mypy`.
-- **Testing**: Pytest. Run `make test`. Test files: `tests/test_background.py`, `tests/test_heatmap.py`, `tests/test_detector.py`, `tests/test_parking.py`.
+- **Testing**: Pytest. Run `make test`. Test files: `tests/test_background.py`, `tests/test_heatmap.py`, `tests/test_detector.py`, `tests/test_parking.py`, `tests/test_xvideo.py`.
 - **Lint all**: `make lint` runs black + isort + mypy checks together.
 - **Infrastructure**: All AWS resources must fit within the Free Tier.
 - **Secrets**: Use SSM Parameter Store. Never hardcode tokens or credentials.
